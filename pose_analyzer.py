@@ -303,41 +303,47 @@ class PoseAnalyzer:
             if avg_distance < 0.1:
                 continue  # 差异太小，不生成建议
 
+            # 生成建议
+            suggestion = {
+                "id": part,  # 使用部位作为唯一标识符
+                "text": "",  # 建议内容
+            }
+
             if abs(avg_diff_y) > abs(avg_diff_x) * 1.5:
                 # 垂直方向差异更大
                 if avg_diff_y > 0:
-                    suggestion = f"你的{chinese_part}整体偏高啦，可以试着稍微放低一点，会更舒展哦～"
+                    suggestion["text"] = f"你的{chinese_part}整体位置偏高啦，试着微微放低并后移重心，能让体态更舒展自然~"  # 加入“重心转移”（书里核心技巧）
                 else:
-                    suggestion = f"你的{chinese_part}整体偏低呢，适当抬高一些，姿态会更棒哦～"
+                    suggestion["text"]  = f"你的{chinese_part}整体位置偏低啦，轻轻抬高并让身体微侧（避开正对镜头），比例会更协调~"  # 加入“身体微侧避僵硬”（书里基础原则）
             elif abs(avg_diff_x) > abs(avg_diff_y) * 1.5:
                 # 水平方向差异更大
                 if avg_diff_x > 0:
-                    suggestion = f"你的{chinese_part}整体偏右一点点，稍微向左调整下，会更平衡哦～"
+                    suggestion["text"]  = f"你的{chinese_part}整体偏右啦，轻轻向左调整，同时让手臂与身体留些空隙（避免紧贴显宽），平衡感会更好~"  # 加入“负空间”（书里避误区技巧）
                 else:
-                    suggestion = f"你的{chinese_part}整体偏左啦，轻轻向右调整一下，体态会更稳哦～"
+                    suggestion["text"]  = f"你的{chinese_part}整体偏左啦，轻轻向右调整，搭配肩部微微放松下沉，体态会更舒展协调~"  # 加入“肩颈放松”（书里面部+身体摆姿）
             else:
                 # 对角方向差异
                 if avg_diff_x > 0 and avg_diff_y > 0:
-                    suggestion = f"你的{chinese_part}整体偏右上方哦，试着向左下方调整一点点，整体会更协调～"
+                    suggestion["text"]  = f"你的{chinese_part}整体偏右上方啦，向左下方调整的同时，让重心移到后脚，能让体态更稳更协调~"  # 加入“重心转移”
                 elif avg_diff_x < 0 and avg_diff_y > 0:
-                    suggestion = f"你的{chinese_part}整体偏左上方呢，往右下方向轻轻调整，姿态会更舒展～"
+                    suggestion["text"]  = f"你的{chinese_part}整体偏左上方啦，往右下方向调整，同时让身体微侧15°（避开正对镜头的僵硬感），姿态会更自然~"  # 加入“身体微侧”
                 elif avg_diff_x > 0 and avg_diff_y < 0:
-                    suggestion = f"你的{chinese_part}整体偏右下方啦，稍微向左上方调整，会更贴合舒适的状态哦～"
+                    suggestion["text"]  = f"你的{chinese_part}整体偏右下方啦，向左上方调整，搭配腿部微微弯曲（创造曲线感），状态会更松弛好看~"  # 加入“曲线创造”（书里女士美姿）
                 else:
-                    suggestion = f"你的{chinese_part}整体偏左下方哦，往右上方向调整一下，整体体态会更优～"
+                    suggestion["text"]  = f"你的{chinese_part}整体偏左下方啦，往右上方向调整，同时轻抬下巴（避免双下巴），整体体态会更精致~"  # 加入“下巴调整”（书里面部摆姿）
 
+
+            # 添加补充建议到每个部位的建议中
+            if part == "shoulders":
+                suggestion["text"] += " 试着轻轻放松肩膀并微微后展，让手臂与身体留些空隙（避免紧贴显宽），整个人会更松弛自然~"
+            elif part == "hips":
+                suggestion["text"] += " 试着保持骨盆中立，同时让重心移到一侧腿上（避免僵硬），还能悄悄弱化臀部的视觉宽度~"
+            elif part == "face":
+                suggestion["text"] += " 保持面部自然放松，轻抬下巴并让眼神看向镜头上方3cm（更灵动不生硬），状态会更精致好看~"
             suggestions.append(suggestion)
 
-            # 添加具体部位的补充建议
-            if part == "shoulders":
-                suggestions.append("试着轻轻放松肩膀，不用刻意耸肩，整个人会更放松自在哦～")
-            elif part == "hips":
-                suggestions.append("可以试着保持骨盆中立的状态，避免前倾或后倾，身体会更稳哦～")
-            elif part == "face":
-                suggestions.append("保持面部自然放松就好啦，温柔注视前方，状态会更棒哦～")
 
         return suggestions[:5]  # 最多返回5条建议
-
 
     def get_detailed_analysis(self, differences):
         """获取详细的身体部位分析"""

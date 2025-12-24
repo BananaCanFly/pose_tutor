@@ -166,13 +166,14 @@ class PoseCoachApp:
         else:
             std_keypoints = prev_analysis.get("std_keypoints")
 
-        # ======================
-        # 5️⃣ 画用户骨架（每帧）
-        # ======================
-        output_frame = self.extractor.draw_skeleton(
-            frame.copy(),
-            keypoints
-        )
+        # # ======================
+        # # 5️⃣ 画用户骨架（每帧）
+        # # ======================
+        # output_frame = self.extractor.draw_skeleton(
+        #     frame.copy(),
+        #     keypoints
+        # )
+        output_frame = frame
 
         # ======================
         # 6️⃣ 画模板骨架（每帧）
@@ -196,25 +197,26 @@ class PoseCoachApp:
         score = analysis.get("score", 0)
         score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
 
-        cv2.putText(
-            output_frame,
-            f"Score: {score}/100",
-            (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            score_color,
-            2
-        )
+        # 绘制进度条
+        bar_width = 300  # 进度条的宽度
+        bar_height = 25  # 进度条的高度
+        progress = int((score / 100) * bar_width)  # 映射分数到进度条宽度
 
-        cv2.putText(
-            output_frame,
-            f"Target Pose: {analysis['standard_pose']}",
-            (20, 80),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 255),
-            2
-        )
+        # 绘制背景矩形（灰色）
+        cv2.rectangle(output_frame, (20, 20), (20 + bar_width, 20 + bar_height), (200, 200, 200), -1)
+
+        # 绘制前景矩形（进度条）
+        cv2.rectangle(output_frame, (20, 20), (20 + progress, 20 + bar_height), score_color, -1)
+
+        # cv2.putText(
+        #     output_frame,
+        #     f"Target Pose: {analysis['standard_pose']}",
+        #     (20, 80),
+        #     cv2.FONT_HERSHEY_SIMPLEX,
+        #     0.8,
+        #     (255, 255, 255),
+        #     2
+        # )
 
         # ======================
         # 8️⃣ 返回完整状态
@@ -375,6 +377,39 @@ def display_joint_differences(differences):
                 </div>
                 """, unsafe_allow_html=True)
 
+def display_suggestions_ui(total_suggestions, current_suggestions):
+    # st.markdown("### 💡 姿势建议总览")
+
+    st.markdown("### 💡 实时姿势建议")
+    # 获取实时建议的ID集合
+    current_ids = {s['id'] for s in current_suggestions}
+
+    # 遍历总建议
+    for s in total_suggestions:
+        if s['id'] in current_ids:
+            # 未实现建议 → 红色警示
+            color = "#FF4B4B"
+            icon = "⚠️"
+            bg_color = "#FFEAEA"
+        else:
+            # 已实现建议 → 绿色 ✅
+            color = "#4CAF50"
+            icon = "✅"
+            bg_color = "#E8F8F0"
+
+        # 使用 HTML 卡片样式展示
+        st.markdown(f"""
+        <div style="
+            border: 1px solid {color};
+            border-radius: 10px;
+            padding: 15px;
+            margin: 5px 0;
+            background-color: {bg_color};
+        ">
+            <span style="font-size:18px; font-weight:bold; color:{color}">{icon} {s['id']}</span>
+            <p style="margin:5px 0; color:#333; font-size:16px">{s['text']}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 def main():
@@ -393,19 +428,12 @@ def main():
         st.info("请确保已运行: python pose_extractor.py")
         return
 
-    # 侧边栏
-    with st.sidebar:
-        st.header("🎯 设置")
 
+    # 主界面
+    col1, col2 = st.columns([7, 3])
+    with col1:
         # 检查是否有标准姿势
-        if not app.analyzer.standard_poses:
-            st.warning("⚠️ 还没有标准姿势数据")
-            st.info("请先运行: python pose_extractor.py")
-            available_poses = []
-        else:
-            available_poses = list(app.analyzer.standard_poses.keys())
-            st.success(f"✅ 已加载 {len(available_poses)} 个标准姿势")
-
+        available_poses = list(app.analyzer.standard_poses.keys())
         # 选择标准姿势
         if available_poses:
             st.subheader("选择目标姿势")
@@ -426,234 +454,250 @@ def main():
                 if preview_path.exists():
                     st.image(str(preview_path), use_column_width=True, caption=f"标准姿势: {selected_pose}")
 
-        st.markdown("---")
-        st.subheader("📖 使用指南")
-        st.info("""
-        1. 📸 打开摄像头拍摄全身照片
-        2. 🎯 选择要对比的标准姿势（或自动识别）
-        3. 🔍 点击"分析我的姿势"按钮
-        4. 📊 查看分析结果和改进建议
-        """)
+        st.warning("正在使用摄像头，按下按钮开始实时分析")
 
-        st.markdown("---")
-        st.subheader("📝 拍照建议")
-        st.write("""
-        ✅ 好的照片应该:
-        - 光线充足，清晰可见
-        - 全身入镜，姿势完整
-        - 正面或侧面站立
+        # 按钮在循环外，只出现一次
+        start_btn = st.button("开始实时姿势分析", type="primary", key="start_realtime_btn")
+        stop_btn = st.button("停止实时分析", key="stop_realtime_btn")  # 注意：按钮不在循环里
+        # ctrlc_btn = st.button("📋 复制建议", key="ctrlc_suggestion_btn")
+        # ctrls_btn = st.button("📸 保存对比图", key="ctrls_contract_pic_btn")
+        # 在循环外初始化标志
+        if 'buttons_created' not in st.session_state:
+            st.session_state.buttons_created = False
 
-        ❌ 避免:
-        - 太暗或模糊
-        - 只拍到部分身体
-        - 遮挡身体的衣服
-        """)
+        video_box = st.empty()
+        suggestion_box = st.empty()
 
-    # 主界面
-    col1, col2 = st.columns([7, 3])
-    with col1:
-        st.subheader("实时摄像头分析")
-        run_realtime = st.checkbox("开启实时摄像头模式", value=False)
+        if start_btn:
+            # cap = cv2.VideoCapture(0)
+            cap = cv2.VideoCapture(1)
+            if not cap.isOpened():
+                st.error("无法打开摄像头")
+            else:
+                frame_count = 0
+                prev_analysis = None  # 保存上一次分析结果
+                global_total_suggestions = None
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-        if run_realtime:
-            st.warning("正在使用摄像头，按下按钮开始实时分析")
+                    # 停止条件在此检测（读取按钮状态，而不重新创建按钮）
+                    if stop_btn:
+                        break
 
-            # 按钮在循环外，只出现一次
-            start_btn = st.button("开始实时姿势分析", type="primary", key="start_realtime_btn")
-            stop_btn = st.button("停止实时分析", key="stop_realtime_btn")  # 注意：按钮不在循环里
-            # ctrlc_btn = st.button("📋 复制建议", key="ctrlc_suggestion_btn")
-            # ctrls_btn = st.button("📸 保存对比图", key="ctrls_contract_pic_btn")
-            # 在循环外初始化标志
-            if 'buttons_created' not in st.session_state:
-                st.session_state.buttons_created = False
-
-            video_box = st.empty()
-            suggestion_box = st.empty()
-
-            if start_btn:
-                # cap = cv2.VideoCapture(0)
-                cap = cv2.VideoCapture(1)
-                if not cap.isOpened():
-                    st.error("无法打开摄像头")
-                else:
-                    frame_count = 0
-                    prev_analysis = None  # 保存上一次分析结果
-                    while True:
-                        ret, frame = cap.read()
-                        if not ret:
-                            break
-
-                        # 停止条件在此检测（读取按钮状态，而不重新创建按钮）
-                        if stop_btn:
-                            break
-
-                        # 1️⃣ 姿势分析每 FRAME_COUNT_EVERY_PROCESS 帧执行一次
-                        if frame_count % FRAME_COUNT_EVERY_PROCESS == 0:
-                            # 实时处理
-                            result = app.process_realtime_frame(
-                                frame,
-                                selected_pose if 'selected_pose' in locals() else None,
-                                prev_analysis=prev_analysis
-                            )
-                            if result.get("success"):
-                                prev_analysis = result
-                                stable_update = result["stable_update"]
-                                overlay_frame = result["frame"]
-                            else:
-                                overlay_frame = frame.copy()
+                    # 1️⃣ 姿势分析每 FRAME_COUNT_EVERY_PROCESS 帧执行一次
+                    if frame_count % FRAME_COUNT_EVERY_PROCESS == 0:
+                        # 实时处理
+                        result = app.process_realtime_frame(
+                            frame,
+                            selected_pose if 'selected_pose' in locals() else None,
+                            prev_analysis=prev_analysis
+                        )
+                        if result.get("success"):
+                            prev_analysis = result
+                            stable_update = result["stable_update"]
+                            overlay_frame = result["frame"]
                         else:
+                            overlay_frame = frame.copy()
+                    else:
 
-                            # 非分析帧使用上一帧的关键点绘制骨架
-                            # if prev_analysis:
-                            #     overlay_frame = app.extractor.draw_skeleton(frame.copy(),
-                            #                                                 prev_analysis["user_keypoints"])
-                            # else:
-                            #     overlay_frame = frame.copy()
-                            if prev_analysis and "user_keypoints" in prev_analysis and prev_analysis["user_keypoints"]:
-                                overlay_frame = frame.copy()
+                        # 非分析帧使用上一帧的关键点绘制骨架
+                        # if prev_analysis:
+                        #     overlay_frame = app.extractor.draw_skeleton(frame.copy(),
+                        #                                                 prev_analysis["user_keypoints"])
+                        # else:
+                        #     overlay_frame = frame.copy()
+                        if prev_analysis and "user_keypoints" in prev_analysis and prev_analysis["user_keypoints"]:
+                            overlay_frame = frame.copy()
 
-                                # 1️⃣ 画用户骨架
-                                if prev_analysis and prev_analysis.get("user_keypoints") is not None:
-                                    overlay_frame = app.extractor.draw_skeleton(
-                                        overlay_frame,
-                                        prev_analysis["user_keypoints"]
-                                    )
+                            # 2️⃣ 画模板骨架（关键！）
+                            if prev_analysis and prev_analysis.get("std_keypoints") is not None:
+                                h, w = overlay_frame.shape[:2]
+                                mini_w, mini_h = int(w * 0.28), int(h * 0.38)
+                                overlay_frame = app.extractor.draw_skeleton_mini(
+                                    overlay_frame,
+                                    prev_analysis["std_keypoints"],
+                                    mini_w,
+                                    mini_h,
+                                    margin=15,
+                                    position="left_bottom"
+                                )
 
-                                # 2️⃣ 画模板骨架（关键！）
-                                if prev_analysis and prev_analysis.get("std_keypoints") is not None:
-                                    h, w = overlay_frame.shape[:2]
-                                    mini_w, mini_h = int(w * 0.28), int(h * 0.38)
-
-                                    overlay_frame = app.extractor.draw_skeleton_mini(
-                                        overlay_frame,
-                                        prev_analysis["std_keypoints"],
-                                        mini_w,
-                                        mini_h,
-                                        margin=15,
-                                        position="left_bottom"
-                                    )
-
-                                # 3️⃣ 画分数和目标姿势
-                                if prev_analysis and prev_analysis.get("analysis"):
-                                    analysis = prev_analysis["analysis"]
-                                    score = analysis.get("score", 0)
-                                    score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
-
-                                    cv2.putText(overlay_frame, f"Score: {score}/100", (20, 40),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 1.0, score_color, 2)
-                                    cv2.putText(overlay_frame, f"Target Pose: {analysis.get('standard_pose', '--')}",
-                                                (20, 80),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-                            else:
-                                overlay_frame = frame.copy()
-
-                            # ===== 每帧都显示评分、目标姿势和建议 =====
+                            # 3️⃣ 画分数和目标姿势
                             if prev_analysis and prev_analysis.get("analysis"):
                                 analysis = prev_analysis["analysis"]
                                 score = analysis.get("score", 0)
                                 score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
+                                # ---- 绘制进度条 ----
+                                bar_width = 300  # 进度条的宽度
+                                bar_height = 25  # 进度条的高度
+                                progress = int((score / 100) * bar_width)  # 映射分数到进度条宽度
 
-                                cv2.putText(overlay_frame, f"Score: {score}/100", (20, 40),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, score_color, 2)
-                                cv2.putText(overlay_frame, f"Target Pose: {analysis.get('standard_pose', '--')}",
-                                            (20, 80),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                                # 绘制背景矩形（灰色）
+                                cv2.rectangle(overlay_frame, (20, 20), (20 + bar_width, 20 + bar_height),
+                                              (200, 200, 200),
+                                              -1)
 
-                                # 网页建议显示
-                                suggestions = analysis.get("suggestions", [])
-                                with suggestion_box.container():
-                                    st.markdown("### 💡 实时姿势建议")
-                                    if not suggestions:
-                                        st.success("姿势良好，请继续保持")
-                                    else:
-                                        for i, s in enumerate(suggestions[:3], 1):
-                                            st.warning(f"建议 {i}：{s}")
+                                # 绘制前景矩形（进度条）
+                                cv2.rectangle(overlay_frame, (20, 20), (20 + progress, 20 + bar_height), score_color,
+                                              -1)
 
-                                    # 详细分析
-                                    with st.expander("📊 查看详细分析", expanded=False):
-                                        st.write(f"**匹配的标准姿势**: {analysis['standard_pose']}")
-                                        st.write(f"**是否合格**: {'✅ 是' if analysis['is_good'] else '❌ 否'}")
+                                # analysis = prev_analysis["analysis"]
+                                # score = analysis.get("score", 0)
+                                # score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
+                                #
+                                # cv2.putText(overlay_frame, f"Score: {score}/100", (20, 40),
+                                #             cv2.FONT_HERSHEY_SIMPLEX, 1.0, score_color, 2)
+                                # cv2.putText(overlay_frame, f"Target Pose: {analysis.get('standard_pose', '--')}",
+                                #             (20, 80),
+                                #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-                                        # 显示身体部位分析
-                                        if "detailed_analysis" in analysis:
-                                            display_part_analysis(analysis["detailed_analysis"])
+                        else:
+                            overlay_frame = frame.copy()
 
-                                        # 显示关节差异
-                                        if "differences" in analysis and analysis["differences"]:
-                                            display_joint_differences(analysis["differences"])
+                        # ===== 每帧都显示评分、目标姿势和建议 =====
+                        if prev_analysis and prev_analysis.get("analysis"):
+                            # analysis = prev_analysis["analysis"]
+                            # score = analysis.get("score", 0)
+                            # score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
+                            # # ---- 绘制进度条 ----
+                            # bar_width = 300  # 进度条的宽度
+                            # bar_height = 25  # 进度条的高度
+                            # progress = int((score / 100) * bar_width)  # 映射分数到进度条宽度
+                            #
+                            # # 绘制背景矩形（灰色）
+                            # cv2.rectangle(overlay_frame, (20, 120), (20 + bar_width, 120 + bar_height), (200, 200, 200),
+                            #               -1)
+                            #
+                            # # 绘制前景矩形（进度条）
+                            # cv2.rectangle(overlay_frame, (20, 120), (20 + progress, 120 + bar_height), score_color, -1)
 
-                                        # 显示关键点统计
-                                        if "user_keypoints" in result:
-                                            st.write(f"**检测到关键点**: {len(result['user_keypoints'])}个")
+                            # # 在进度条上绘制评分文本
+                            # cv2.putText(
+                            #     overlay_frame,
+                            #     f"Score: {score}/100",
+                            #     (bar_width + 40, 120 + bar_height // 2),
+                            #     cv2.FONT_HERSHEY_SIMPLEX,
+                            #     0.8,
+                            #     (255, 255, 255),
+                            #     2
+                            # )
+                            # cv2.putText(overlay_frame, f"Target Pose: {analysis.get('standard_pose', '--')}",
+                            #             (20, 80),
+                            #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                            # 网页建议显示
+                            suggestions = analysis.get("suggestions", [])
+                            with suggestion_box.container():
+                                if not suggestions:
+                                    st.success("姿势良好，请继续保持")
+                                else:
 
-                                    # 导出结果选项
-                                    with st.expander("💾 导出分析结果", expanded=False):
-                                        col_exp1, col_exp2 = st.columns(2)
-                                        # 在循环内
-                                        if not st.session_state.buttons_created:
-                                            ctrlc_btn = st.button("📋 复制建议", key="ctrlc_suggestion_btn")
-                                            ctrls_btn = st.button("📸 保存对比图", key="ctrls_contract_pic_btn")
-                                            st.session_state.buttons_created = True
+                                    if global_total_suggestions == None:
+                                        global_total_suggestions = suggestions
 
-                                        with col_exp1:
-                                            if ctrlc_btn:
-                                                suggestions_text = "\n".join(
-                                                    [f"{i + 1}. {s}" for i, s in
-                                                     enumerate(analysis.get("suggestions", []))])
-                                                st.code(suggestions_text)
-                                        with col_exp2:
-                                            if ctrls_btn:
-                                                # 保存对比图
-                                                import datetime
-                                                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                                                save_path = f"outputs/comparison_{timestamp}.jpg"
-                                                cv2.imwrite(save_path,
-                                                            cv2.cvtColor(result["comparison_image"], cv2.COLOR_RGB2BGR))
-                                                st.success(f"已保存到: {save_path}")
+                                    display_suggestions_ui(global_total_suggestions, suggestions)
+                                    # for i, s in enumerate(suggestions, 1):
+                                    #     # 根据达标状态设置颜色
+                                    #     color = "green" if s.get("achieved", False) else "red"
+                                    #     # 使用 HTML 标签设置颜色
+                                    #     st.markdown(f'<p style="color:{color};">建议 {i}：{s["text"]}</p>',
+                                    #                 unsafe_allow_html=True)
+                                    # 将实时建议列表的 `id` 放入集合
+                                    # print(suggestions)
+                                    # current_ids = {s['id'] for s in suggestions}
+                                    #
+                                    # for total_suggestion in global_total_suggestions:
+                                    #     # 如果总建议存在于实时建议中，则显示为红色（未实现）
+                                    #     if total_suggestion['id'] in current_ids:
+                                    #         color = "red"
+                                    #     else:
+                                    #         # 如果不在实时建议中，说明已实现，显示绿色
+                                    #         color = "green"
+                                    #
+                                    #     # 使用 HTML 渲染带有颜色的建议
+                                    #     st.markdown(f'<p style="color:{color};">{total_suggestion["text"]}</p>',
+                                    #                 unsafe_allow_html=True)
 
-                        # ===== 显示摄像头画面 =====
-                        video_box.image(overlay_frame, channels="BGR", use_container_width=True)
+                                # 详细分析
+                                with st.expander("📊 查看详细分析", expanded=False):
+                                    st.write(f"**匹配的标准姿势**: {analysis['standard_pose']}")
+                                    st.write(f"**是否合格**: {'✅ 是' if analysis['is_good'] else '❌ 否'}")
+                                    # 显示身体部位分析
+                                    if "detailed_analysis" in analysis:
+                                        display_part_analysis(analysis["detailed_analysis"])
+                                    # 显示关节差异
+                                    if "differences" in analysis and analysis["differences"]:
+                                        display_joint_differences(analysis["differences"])
+                                    # 显示关键点统计
+                                    if "user_keypoints" in result:
+                                        st.write(f"**检测到关键点**: {len(result['user_keypoints'])}个")
+                                # 导出结果选项
+                                with st.expander("💾 导出分析结果", expanded=False):
+                                    col_exp1, col_exp2 = st.columns(2)
+                                    # 在循环内
+                                    if not st.session_state.buttons_created:
+                                        ctrlc_btn = st.button("📋 复制建议", key="ctrlc_suggestion_btn")
+                                        ctrls_btn = st.button("📸 保存对比图", key="ctrls_contract_pic_btn")
+                                        st.session_state.buttons_created = True
+                                    with col_exp1:
+                                        if ctrlc_btn:
+                                            suggestions_text = "\n".join(
+                                                [f"{i + 1}. {s}" for i, s in
+                                                 enumerate(analysis.get("suggestions", []))])
+                                            st.code(suggestions_text)
+                                    with col_exp2:
+                                        if ctrls_btn:
+                                            # 保存对比图
+                                            import datetime
+                                            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                            save_path = f"outputs/comparison_{timestamp}.jpg"
+                                            cv2.imwrite(save_path,
+                                                        cv2.cvtColor(result["comparison_image"], cv2.COLOR_RGB2BGR))
+                                            st.success(f"已保存到: {save_path}")
 
-                        frame_count += 1
+                    # ===== 显示摄像头画面 =====
+                    video_box.image(overlay_frame, channels="BGR", use_container_width=True)
 
-                    cap.release()
+                    frame_count += 1
+
+                cap.release()
                 st.stop()
 
     with col2:
         st.subheader("📚 标准姿势库")
 
-        if not available_poses:
-            st.info("👈 请先运行骨架提取工具")
-            st.code("python pose_extractor.py")
-        else:
-            st.success(f"✅ 已加载 {len(available_poses)} 个标准姿势")
+        # if not available_poses:
+        #     st.info("👈 请先运行骨架提取工具")
+        #     st.code("python pose_extractor.py")
+        # else:
+        #     st.success(f"✅ 已加载 {len(available_poses)} 个标准姿势")
 
-            # 显示所有标准姿势
-            for pose_name in available_poses:
-                with st.expander(f"姿势: {pose_name}"):
+        # 显示所有标准姿势
+        for pose_name in available_poses:
+            with st.expander(f"姿势: {pose_name}"):
 
-                    preview_path = Path("standard_poses") / f"{pose_name}_preview.jpg"
-                    json_path = Path("standard_poses") / f"{pose_name}.json"
+                preview_path = Path("standard_poses") / f"{pose_name}_preview.jpg"
+                json_path = Path("standard_poses") / f"{pose_name}.json"
 
-                    tab1, tab2 = st.tabs(["预览图", "关键点数据"])
+                tab1, tab2 = st.tabs(["预览图", "关键点数据"])
 
-                    with tab1:
-                        if preview_path.exists():
-                            st.image(str(preview_path), use_container_width=True, caption=f"姿势: {pose_name}")
-                        else:
-                            st.info("没有找到预览图")
+                with tab1:
+                    if preview_path.exists():
+                        st.image(str(preview_path), use_container_width=True, caption=f"姿势: {pose_name}")
+                    else:
+                        st.info("没有找到预览图")
 
-                    with tab2:
-                        if json_path.exists():
-                            try:
-                                with open(json_path, 'r', encoding='utf-8') as f:
-                                    data = json.load(f)
-                                st.json(data)
-                            except Exception as e:
-                                st.error(f"读取 JSON 失败: {e}")
-                        else:
-                            st.info("没有找到 JSON 文件")
+                with tab2:
+                    if json_path.exists():
+                        try:
+                            with open(json_path, 'r', encoding='utf-8') as f:
+                                data = json.load(f)
+                            st.json(data)
+                        except Exception as e:
+                            st.error(f"读取 JSON 失败: {e}")
+                    else:
+                        st.info("没有找到 JSON 文件")
 
 
 if __name__ == "__main__":

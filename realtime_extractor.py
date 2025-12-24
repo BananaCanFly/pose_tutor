@@ -59,41 +59,76 @@ class PoseExtractor:
         return keypoints
 
     def draw_skeleton(self, image, keypoints):
-        """在图片上绘制骨架"""
-        if image is None or keypoints is None:
-            return image
+        """在图片上绘制完整骨架（包含面部、手部细节、脚踝）"""
+        try:
+            if image is None: return None
+            height, width = image.shape[:2]
 
-        h, w = image.shape[:2]
+            # === 1. 定义连线关系 (全细节) ===
+            connections = [
+                # 躯干
+                (11, 12), (11, 23), (12, 24), (23, 24),
+                # 手臂
+                (11, 13), (13, 15), (12, 14), (14, 16),
+                # 腿部
+                (23, 25), (25, 27), (24, 26), (26, 28),
+                # --- 新增细节 ---
+                # 面部
+                (0, 1), (1, 2), (2, 3), (3, 7),  # 左眼区
+                (0, 4), (4, 5), (5, 6), (6, 8),  # 右眼区
+                (9, 10),  # 嘴巴
+                # 手部 (手腕到指尖)
+                (15, 17), (15, 19), (15, 21), (17, 19),  # 左手掌
+                (16, 18), (16, 20), (16, 22), (18, 20),  # 右手掌
+                # 脚部 (脚踝到脚跟、脚尖)
+                (27, 29), (27, 31), (29, 31),  # 左脚
+                (28, 30), (28, 32), (30, 32)  # 右脚
+            ]
 
-        # 把关键点转换成字典，方便按 id 查找
-        kp_dict = {kp['id']: kp for kp in keypoints}
+            # === 2. 绘制连线 ===
+            for start, end in connections:
+                if start < len(keypoints) and end < len(keypoints):
+                    kp1 = keypoints[start]
+                    kp2 = keypoints[end]
 
-        # 绘制骨架连线
-        for start_id, end_id in self.pose_connections:
-            if start_id in kp_dict and end_id in kp_dict:
-                p1 = kp_dict[start_id]
-                p2 = kp_dict[end_id]
+                    # 只要可见度 > 0.5 就画出来，不做严格过滤
+                    if kp1['visibility'] > 0.5 and kp2['visibility'] > 0.5:
+                        p1 = (int(kp1['x'] * width), int(kp1['y'] * height))
+                        p2 = (int(kp2['x'] * width), int(kp2['y'] * height))
 
-                # 只绘制可见的关节点
-                if p1['visibility'] > 0.5 and p2['visibility'] > 0.5:
-                    # 颜色区分左右
-                    if start_id in [11, 13, 15, 23, 25, 27]:  # 左侧关节
-                        color = (0, 255, 0)  # 绿色
-                    elif start_id in [12, 14, 16, 24, 26, 28]:  # 右侧关节
-                        color = (255, 0, 0)  # 蓝色
+                        # 根据身体部位使用不同颜色
+                        color = (0, 255, 0)  # 默认绿色
+                        if start <= 10:
+                            color = (255, 200, 0)  # 面部青色
+                        elif start >= 25:
+                            color = (0, 165, 255)  # 腿部橙色
+                        elif start >= 15 and start <= 22:
+                            color = (255, 0, 255)  # 手部紫色
+
+                        cv2.line(image, p1, p2, color, 2)
+
+            # === 3. 绘制关键点 ===
+            for i, kp in enumerate(keypoints):
+                if kp['visibility'] > 0.5:
+                    x = int(kp['x'] * width)
+                    y = int(kp['y'] * height)
+
+                    # 关键点颜色
+                    if i <= 10:
+                        c = (255, 200, 0)  # 面部
+                    elif i >= 15 and i <= 22:
+                        c = (255, 0, 255)  # 手部
+                    elif i >= 27:
+                        c = (0, 165, 255)  # 脚部
                     else:
-                        color = (0, 255, 255)  # 其他（躯干、头部）黄色
+                        c = (0, 0, 255)  # 躯干红色
 
-                    start_point = (int(p1['x'] * w), int(p1['y'] * h))
-                    end_point = (int(p2['x'] * w), int(p2['y'] * h))
-                    cv2.line(image, start_point, end_point, color, 2)
+                    cv2.circle(image, (x, y), 4, c, -1)
 
-        # 绘制关节点
-        for kp in keypoints:
-            if kp['visibility'] > 0.5:
-                x, y = int(kp['x'] * w), int(kp['y'] * h)
-                cv2.circle(image, (x, y), 2, (0, 0, 255), -1)  # 红色点
+            # return image
 
+        except Exception as e:
+            print(f"❌ 绘制骨架时出错: {e}")
         return image
 
     def draw_skeleton_mini(self, image, keypoints, mini_w, mini_h, margin=15, position='left_bottom'):
@@ -110,11 +145,10 @@ class PoseExtractor:
 
         h, w = image.shape[:2]
 
-        # 1️⃣ 创建透明小画布
+        # 1️⃣ 创建透明小画布 (RGBA)
         mini_overlay = np.zeros((mini_h, mini_w, 4), dtype=np.uint8)
 
         # 2️⃣ 计算关键点范围
-        # 计算关键点范围
         xs = [kp["x"] for kp in keypoints]
         ys = [kp["y"] for kp in keypoints]
         min_x, max_x = min(xs), max(xs)
@@ -123,7 +157,7 @@ class PoseExtractor:
         keypoint_w = max_x - min_x
         keypoint_h = max_y - min_y
 
-        # 统一缩放系数，保证比例不变
+        # 统一缩放系数，保持比例
         scale_x = mini_w / (keypoint_w + 1e-6)
         scale_y = mini_h / (keypoint_h + 1e-6)
         scale = min(scale_x, scale_y) * 0.9  # 留边距
@@ -131,33 +165,66 @@ class PoseExtractor:
         offset_x = (mini_w - (max_x - min_x) * scale) / 2
         offset_y = (mini_h - (max_y - min_y) * scale) / 2
 
-        # 3️⃣ 绘制骨架连线
-        kp_dict = {kp['id']: kp for kp in keypoints}
-        for start_id, end_id in self.pose_connections:
-            if start_id in kp_dict and end_id in kp_dict:
-                p1, p2 = kp_dict[start_id], kp_dict[end_id]
-                if p1['visibility'] > 0.5 and p2['visibility'] > 0.5:
-                    start_point = (int((p1['x'] - min_x) * scale + offset_x),
-                                   int((p1['y'] - min_y) * scale + offset_y))
-                    end_point = (int((p2['x'] - min_x) * scale + offset_x),
-                                 int((p2['y'] - min_y) * scale + offset_y))
+        # === 3. 绘制骨架连线 ===
+        connections = [
+            # 躯干
+            (11, 12), (11, 23), (12, 24), (23, 24),
+            # 手臂
+            (11, 13), (13, 15), (12, 14), (14, 16),
+            # 腿部
+            (23, 25), (25, 27), (24, 26), (26, 28),
+            # --- 新增细节 ---
+            # 面部
+            (0, 1), (1, 2), (2, 3), (3, 7),  # 左眼区
+            (0, 4), (4, 5), (5, 6), (6, 8),  # 右眼区
+            (9, 10),  # 嘴巴
+            # 手部 (手腕到指尖)
+            (15, 17), (15, 19), (15, 21), (17, 19),  # 左手掌
+            (16, 18), (16, 20), (16, 22), (18, 20),  # 右手掌
+            # 脚部 (脚踝到脚跟、脚尖)
+            (27, 29), (27, 31), (29, 31),  # 左脚
+            (28, 30), (28, 32), (30, 32)  # 右脚
+        ]
 
-                    # 颜色区分左右
-                    if start_id in [11, 13, 15, 23, 25, 27]:
-                        color = (0, 255, 0, 255)  # 左侧关节
-                    elif start_id in [12, 14, 16, 24, 26, 28]:
-                        color = (255, 0, 0, 255)  # 右侧关节
-                    else:
-                        color = (0, 255, 255, 255)  # 躯干/头部
+        # 绘制连线
+        for start, end in connections:
+            if start < len(keypoints) and end < len(keypoints):
+                kp1 = keypoints[start]
+                kp2 = keypoints[end]
+                if kp1['visibility'] > 0.5 and kp2['visibility'] > 0.5:
+                    p1 = (int((kp1['x'] - min_x) * scale + offset_x),
+                          int((kp1['y'] - min_y) * scale + offset_y))
+                    p2 = (int((kp2['x'] - min_x) * scale + offset_x),
+                          int((kp2['y'] - min_y) * scale + offset_y))
 
-                    cv2.line(mini_overlay, start_point, end_point, color, 2)
+                    # 根据身体部位使用相同颜色
+                    color = (0, 255, 0,255)  # 默认绿色
+                    if start <= 10:
+                        color = (255, 200, 0,255)  # 面部青色
+                    elif start >= 25:
+                        color = (0, 165, 255,255)  # 腿部橙色
+                    elif 15 <= start <= 22:
+                        color = (255, 0, 255, 255)  # 手部紫色
 
-        # 4️⃣ 绘制关节点
-        for kp in keypoints:
+                    cv2.line(mini_overlay, p1, p2, color, 1)
+
+        # 绘制关键点
+        for i, kp in enumerate(keypoints):
             if kp['visibility'] > 0.5:
                 x = int((kp['x'] - min_x) * scale + offset_x)
                 y = int((kp['y'] - min_y) * scale + offset_y)
-                cv2.circle(mini_overlay, (x, y), 1, (0, 0, 255, 255), -1)
+
+                if i <= 10:
+                    c = (255, 200, 0,255)  # 面部
+                elif 15 <= i <= 22:
+                    c = (255, 0, 255,255)  # 手部
+                elif i >= 27:
+                    c = (0, 165, 255,255)  # 脚部
+                else:
+                    c = (0, 0, 255,255)  # 躯干
+
+                cv2.circle(mini_overlay, (x, y), 2, c, -1)
+
 
         # 5️⃣ 计算贴到原图的坐标
         if position == 'left_bottom':
