@@ -47,14 +47,17 @@ class PoseExtractor:
 
         # 整理关键点数据
         keypoints = []
-        for i, landmark in enumerate(results.pose_landmarks.landmark):
-            keypoints.append({
-                "id": i,
-                "x": float(landmark.x),
-                "y": float(landmark.y),
-                "z": float(landmark.z),
-                "visibility": float(landmark.visibility)
-            })
+        if results.pose_landmarks:
+            for i, landmark in enumerate(results.pose_landmarks.landmark):
+                keypoints.append({
+                    "id": i,
+                    "x": float(landmark.x),
+                    "y": float(landmark.y),
+                    "z": float(landmark.z),
+                    "visibility": float(landmark.visibility)
+                })
+        else:
+            keypoints = []  # 或者根据需要返回一个默认值
 
         return keypoints
 

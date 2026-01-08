@@ -5,6 +5,8 @@ import tempfile
 import numpy as np
 import os
 from pathlib import Path
+
+import torch
 from PIL import Image
 import json
 import matplotlib
@@ -17,6 +19,7 @@ try:
     from realtime_extractor import PoseExtractor
     from pose_analyzer import PoseAnalyzer
     from simple_avatar import SimpleAvatar
+    from CompositionAnalyzer import analyze_crop_and_zoom
 except ImportError as e:
     st.error(f"导入模块出错: {e}")
     st.stop()
@@ -26,7 +29,7 @@ FRAME_COUNT_EVERY_PROCESS = 5
 
 # 页面配置
 st.set_page_config(
-    page_title="拍照姿势提示",
+    page_title="拍照提示",
     page_icon="📸",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -119,14 +122,11 @@ class PoseCoachApp:
         # 1️⃣ 提取用户关键点
         # ======================
         keypoints = self.extractor.extract_from_frame(frame)
+        # print(keypoints)
         if keypoints is None:
-            return {
-                "success": False,
-                "frame": frame,
-                "analysis": None,
-                "user_keypoints": None,
-                "std_keypoints": prev_analysis.get("std_keypoints") if prev_analysis else None
-            }
+            # 在关键点为None时使用一个默认的空关键点数据
+            keypoints = {"keypoints": []}
+            st.warning("无法提取到有效的关键点数据，正在使用默认的空数据进行处理。")
 
         # ======================
         # 2️⃣ 姿势分析
@@ -208,16 +208,6 @@ class PoseCoachApp:
         # 绘制前景矩形（进度条）
         cv2.rectangle(output_frame, (20, 20), (20 + progress, 20 + bar_height), score_color, -1)
 
-        # cv2.putText(
-        #     output_frame,
-        #     f"Target Pose: {analysis['standard_pose']}",
-        #     (20, 80),
-        #     cv2.FONT_HERSHEY_SIMPLEX,
-        #     0.8,
-        #     (255, 255, 255),
-        #     2
-        # )
-
         # ======================
         # 8️⃣ 返回完整状态
         # ======================
@@ -231,156 +221,42 @@ class PoseCoachApp:
         }
 
 
-def display_part_analysis(analysis_data):
-    """显示身体部位详细分析"""
-    if not analysis_data:
-        return
 
-    # 中文部位名称映射
-    part_names = {
-        "face": "面部",
-        "shoulders": "肩膀",
-        "elbows": "手肘",
-        "wrists": "手腕",
-        "hands": "手部",
-        "hips": "髋部",
-        "knees": "膝盖",
-        "ankles": "脚踝",
-        "feet": "脚部",
-        "other": "其他"
-    }
+def display_camera_suggestions(suggestions):
+    st.markdown("### 💡 相机操纵建议")
 
-    st.subheader("🔍 身体部位分析")
+    for suggestion in suggestions:
+        # 判断是否需要修改并设置颜色
+        if suggestion["need_modify"]:
+            color = "#FF4B4B"  # 红色警告
+            icon = "⚠️"
+            bg_color = "#FFEAEA"
+            status = "待修改"
+        else:
+            color = "#4CAF50"  # 绿色确认
+            icon = "✅"
+            bg_color = "#E8F8F0"
+            status = "已修改"
 
-    # 使用列布局
-    cols = st.columns(3)
-    col_idx = 0
+        # 使用 HTML 卡片样式展示
+        st.markdown(f"""
+        <div style="
+            border: 1px solid {color};
+            border-radius: 10px;
+            padding: 15px;
+            margin: 5px 0;
+            background-color: {bg_color};
+        ">
+            <span style="font-size:18px; font-weight:bold; color:{color}">{icon} {suggestion['text']}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        # """<p style="margin:5px 0; color:#333; font-size:16px">状态: {status}</p>"""
 
-    for part, data in analysis_data.items():
-        if part in ["total_points", "avg_distance", "max_distance"]:
-            continue
-
-        chinese_name = part_names.get(part, part)
-        accuracy = data.get("accuracy_rate", 0)
-        avg_distance = data.get("avg_distance", 0)
-
-        with cols[col_idx]:
-            # 根据准确率显示不同颜色的指标
-            if accuracy >= 90:
-                color = "#4CAF50"
-                emoji = "✅"
-                badge_class = "success-badge"
-            elif accuracy >= 70:
-                color = "#FF9800"
-                emoji = "⚠️"
-                badge_class = "warning-badge"
-            else:
-                color = "#F44336"
-                emoji = "❌"
-                badge_class = "error-badge"
-
-            st.markdown(f"""
-            <div class="part-analysis-card" style="border-left-color: {color};">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                    <strong>{emoji} {chinese_name}</strong>
-                    <span class="joint-difference-badge {badge_class}">{accuracy:.1f}%</span>
-                </div>
-                <div style="font-size: 0.9rem; color: #666;">
-                    • 平均偏差: {avg_distance:.3f}<br>
-                    • 检测点: {data.get('total_points', 0)}个<br>
-                    • 需调整: {data.get('points_need_adjustment', 0)}个
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        col_idx = (col_idx + 1) % 3
-
-
-def display_joint_differences(differences):
-    """显示关节差异详情"""
-    if not differences:
-        return
-
-    st.write("**关键关节差异分析**:")
-
-    # 重要关节的优先级
-    important_joints = ["shoulders", "hips", "elbows", "knees"]
-    secondary_joints = ["wrists", "ankles"]
-
-    # 按优先级分组显示
-    for joint_group in [important_joints, secondary_joints]:
-        displayed = False
-
-        for joint_name, diff in differences.items():
-            part = diff.get("part", "")
-
-            if part in joint_group and diff.get("needs_adjustment", False):
-                if not displayed:
-                    displayed = True
-
-                distance = diff.get("distance", 0)
-                diff_x = diff.get("diff_x", 0)
-                diff_y = diff.get("diff_y", 0)
-
-                # 判断偏移方向
-                direction = ""
-                if abs(diff_x) > abs(diff_y) * 1.5:
-                    direction = "偏右" if diff_x > 0 else "偏左"
-                elif abs(diff_y) > abs(diff_x) * 1.5:
-                    direction = "偏高" if diff_y > 0 else "偏低"
-                else:
-                    # 对角方向
-                    if diff_x > 0 and diff_y > 0:
-                        direction = "偏右上"
-                    elif diff_x < 0 and diff_y > 0:
-                        direction = "偏左上"
-                    elif diff_x > 0 and diff_y < 0:
-                        direction = "偏右下"
-                    else:
-                        direction = "偏左下"
-
-                # 获取中文名称
-                part_names = {
-                    "shoulders": "肩膀",
-                    "hips": "髋部",
-                    "elbows": "手肘",
-                    "knees": "膝盖",
-                    "wrists": "手腕",
-                    "ankles": "脚踝",
-                    "face": "面部",
-                    "hands": "手部",
-                    "feet": "脚部"
-                }
-
-                chinese_part = part_names.get(part, part)
-
-                # 根据距离大小显示不同颜色的标签
-                if distance > 0.15:
-                    badge_color = "#F44336"
-                elif distance > 0.1:
-                    badge_color = "#FF9800"
-                else:
-                    badge_color = "#4CAF50"
-
-                st.markdown(f"""
-                <div style="
-                    background: {badge_color}10;
-                    padding: 0.6rem;
-                    border-radius: 6px;
-                    margin: 0.3rem 0;
-                    border-left: 3px solid {badge_color};
-                ">
-                    <strong>🔸 {chinese_part}</strong> • 偏移{direction}<br>
-                    <span style="font-size: 0.85rem; color: #666;">
-                        距离差异: {distance:.3f}
-                    </span>
-                </div>
-                """, unsafe_allow_html=True)
 
 def display_suggestions_ui(total_suggestions, current_suggestions):
     # st.markdown("### 💡 姿势建议总览")
 
-    st.markdown("### 💡 实时姿势建议")
+    st.markdown("### 💡 姿势建议")
     # 获取实时建议的ID集合
     current_ids = {s['id'] for s in current_suggestions}
 
@@ -417,8 +293,8 @@ def main():
         st.session_state.realtime_running = False
 
     # 应用标题
-    st.markdown('<h1 class="main-header">📸 拍照姿势提示助手</h1>', unsafe_allow_html=True)
-    st.markdown("拍摄你的姿势，与标准姿势对比，获取专业的姿势指导建议！")
+    st.markdown('<h1 class="main-header">📸 拍照提示助手</h1>', unsafe_allow_html=True)
+    # st.markdown("拍摄你的姿势，与标准姿势对比，获取专业的姿势指导建议！")
 
     # 初始化应用
     try:
@@ -428,10 +304,12 @@ def main():
         st.info("请确保已运行: python pose_extractor.py")
         return
 
+    # 加载 YOLOv5 模型（使用预训练权重）
+    yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
 
     # 主界面
-    col1, col2 = st.columns([7, 3])
-    with col1:
+    col1, col2, col3 = st.columns([3, 4, 3])
+    with col2:
         # 检查是否有标准姿势
         available_poses = list(app.analyzer.standard_poses.keys())
         # 选择标准姿势
@@ -454,7 +332,10 @@ def main():
                 if preview_path.exists():
                     st.image(str(preview_path), use_column_width=True, caption=f"标准姿势: {selected_pose}")
 
-        st.warning("正在使用摄像头，按下按钮开始实时分析")
+        suggestion_box = st.empty()
+    with col1:
+
+        # st.warning("正在使用摄像头，按下按钮开始实时分析")
 
         # 按钮在循环外，只出现一次
         start_btn = st.button("开始实时姿势分析", type="primary", key="start_realtime_btn")
@@ -466,7 +347,6 @@ def main():
             st.session_state.buttons_created = False
 
         video_box = st.empty()
-        suggestion_box = st.empty()
 
         if start_btn:
             # cap = cv2.VideoCapture(0)
@@ -474,6 +354,10 @@ def main():
             if not cap.isOpened():
                 st.error("无法打开摄像头")
             else:
+                # 设置摄像头分辨率
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 720)  # 设置宽度为1280
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1280)  # 设置高度为720
+
                 frame_count = 0
                 prev_analysis = None  # 保存上一次分析结果
                 global_total_suggestions = None
@@ -543,128 +427,52 @@ def main():
                                 cv2.rectangle(overlay_frame, (20, 20), (20 + progress, 20 + bar_height), score_color,
                                               -1)
 
-                                # analysis = prev_analysis["analysis"]
-                                # score = analysis.get("score", 0)
-                                # score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
-                                #
-                                # cv2.putText(overlay_frame, f"Score: {score}/100", (20, 40),
-                                #             cv2.FONT_HERSHEY_SIMPLEX, 1.0, score_color, 2)
-                                # cv2.putText(overlay_frame, f"Target Pose: {analysis.get('standard_pose', '--')}",
-                                #             (20, 80),
-                                #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
                         else:
                             overlay_frame = frame.copy()
 
                         # ===== 每帧都显示评分、目标姿势和建议 =====
                         if prev_analysis and prev_analysis.get("analysis"):
-                            # analysis = prev_analysis["analysis"]
-                            # score = analysis.get("score", 0)
-                            # score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
-                            # # ---- 绘制进度条 ----
-                            # bar_width = 300  # 进度条的宽度
-                            # bar_height = 25  # 进度条的高度
-                            # progress = int((score / 100) * bar_width)  # 映射分数到进度条宽度
-                            #
-                            # # 绘制背景矩形（灰色）
-                            # cv2.rectangle(overlay_frame, (20, 120), (20 + bar_width, 120 + bar_height), (200, 200, 200),
-                            #               -1)
-                            #
-                            # # 绘制前景矩形（进度条）
-                            # cv2.rectangle(overlay_frame, (20, 120), (20 + progress, 120 + bar_height), score_color, -1)
 
-                            # # 在进度条上绘制评分文本
-                            # cv2.putText(
-                            #     overlay_frame,
-                            #     f"Score: {score}/100",
-                            #     (bar_width + 40, 120 + bar_height // 2),
-                            #     cv2.FONT_HERSHEY_SIMPLEX,
-                            #     0.8,
-                            #     (255, 255, 255),
-                            #     2
-                            # )
-                            # cv2.putText(overlay_frame, f"Target Pose: {analysis.get('standard_pose', '--')}",
-                            #             (20, 80),
-                            #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                             # 网页建议显示
-                            suggestions = analysis.get("suggestions", [])
+                            posture_suggestions = analysis.get("suggestions", [])
+
+                            # 获取裁剪和缩放建议
+                            camera_suggestion = analyze_crop_and_zoom(frame, PoseExtractor().extract_from_frame(frame), yolo_model)
+
+                            suggestions = []
+
+                            # print(camera_suggestion)
+                            # 裁剪建议永远放第一个
+                            # if crop_suggestion:
+                            #     print(crop_suggestion)
+                                # suggestions.append(crop_suggestion)
+
+                            # 再加入你已有的姿态建议
+                            suggestions.extend(posture_suggestions)
+
+                            suggestions = suggestions[:3]
+
                             with suggestion_box.container():
+                                display_camera_suggestions(camera_suggestion)
                                 if not suggestions:
                                     st.success("姿势良好，请继续保持")
                                 else:
 
                                     if global_total_suggestions == None:
                                         global_total_suggestions = suggestions
+                                    # with col2:
 
                                     display_suggestions_ui(global_total_suggestions, suggestions)
-                                    # for i, s in enumerate(suggestions, 1):
-                                    #     # 根据达标状态设置颜色
-                                    #     color = "green" if s.get("achieved", False) else "red"
-                                    #     # 使用 HTML 标签设置颜色
-                                    #     st.markdown(f'<p style="color:{color};">建议 {i}：{s["text"]}</p>',
-                                    #                 unsafe_allow_html=True)
-                                    # 将实时建议列表的 `id` 放入集合
-                                    # print(suggestions)
-                                    # current_ids = {s['id'] for s in suggestions}
-                                    #
-                                    # for total_suggestion in global_total_suggestions:
-                                    #     # 如果总建议存在于实时建议中，则显示为红色（未实现）
-                                    #     if total_suggestion['id'] in current_ids:
-                                    #         color = "red"
-                                    #     else:
-                                    #         # 如果不在实时建议中，说明已实现，显示绿色
-                                    #         color = "green"
-                                    #
-                                    #     # 使用 HTML 渲染带有颜色的建议
-                                    #     st.markdown(f'<p style="color:{color};">{total_suggestion["text"]}</p>',
-                                    #                 unsafe_allow_html=True)
-
-                                # 详细分析
-                                with st.expander("📊 查看详细分析", expanded=False):
-                                    st.write(f"**匹配的标准姿势**: {analysis['standard_pose']}")
-                                    st.write(f"**是否合格**: {'✅ 是' if analysis['is_good'] else '❌ 否'}")
-                                    # 显示身体部位分析
-                                    if "detailed_analysis" in analysis:
-                                        display_part_analysis(analysis["detailed_analysis"])
-                                    # 显示关节差异
-                                    if "differences" in analysis and analysis["differences"]:
-                                        display_joint_differences(analysis["differences"])
-                                    # 显示关键点统计
-                                    if "user_keypoints" in result:
-                                        st.write(f"**检测到关键点**: {len(result['user_keypoints'])}个")
-                                # 导出结果选项
-                                with st.expander("💾 导出分析结果", expanded=False):
-                                    col_exp1, col_exp2 = st.columns(2)
-                                    # 在循环内
-                                    if not st.session_state.buttons_created:
-                                        ctrlc_btn = st.button("📋 复制建议", key="ctrlc_suggestion_btn")
-                                        ctrls_btn = st.button("📸 保存对比图", key="ctrls_contract_pic_btn")
-                                        st.session_state.buttons_created = True
-                                    with col_exp1:
-                                        if ctrlc_btn:
-                                            suggestions_text = "\n".join(
-                                                [f"{i + 1}. {s}" for i, s in
-                                                 enumerate(analysis.get("suggestions", []))])
-                                            st.code(suggestions_text)
-                                    with col_exp2:
-                                        if ctrls_btn:
-                                            # 保存对比图
-                                            import datetime
-                                            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                                            save_path = f"outputs/comparison_{timestamp}.jpg"
-                                            cv2.imwrite(save_path,
-                                                        cv2.cvtColor(result["comparison_image"], cv2.COLOR_RGB2BGR))
-                                            st.success(f"已保存到: {save_path}")
 
                     # ===== 显示摄像头画面 =====
-                    video_box.image(overlay_frame, channels="BGR", use_container_width=True)
+                    video_box.image(overlay_frame, channels="BGR")
 
                     frame_count += 1
 
                 cap.release()
                 st.stop()
 
-    with col2:
+    with col3:
         st.subheader("📚 标准姿势库")
 
         # if not available_poses:
