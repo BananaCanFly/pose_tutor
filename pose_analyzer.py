@@ -261,21 +261,19 @@ class PoseAnalyzer:
         final_score = total_score / total_weight
         return round(min(100, final_score), 1)
 
+
     def generate_suggestions(self, differences):
-        """根据差异生成改进建议"""
+        """根据关键点偏差生成可执行动作指令"""
         suggestions = []
 
         # 按部位分组
         part_differences = {}
-
         for joint_name, joint_data in differences.items():
             if joint_data["needs_adjustment"]:
                 part = joint_data["part"]
-                if part not in part_differences:
-                    part_differences[part] = []
-                part_differences[part].append(joint_data)
+                part_differences.setdefault(part, []).append(joint_data)
 
-        # 中文部位名称映射
+        # 中文部位映射
         part_translations = {
             "face": "面部",
             "shoulders": "肩膀",
@@ -288,62 +286,55 @@ class PoseAnalyzer:
             "feet": "脚部"
         }
 
-        # 为每个部位生成建议
+        # 为每个部位生成动作指令
         for part, diffs in part_differences.items():
             if not diffs:
                 continue
 
             chinese_part = part_translations.get(part, part)
-
-            # 计算该部位的平均偏移方向
             avg_diff_x = np.mean([d["diff_x"] for d in diffs])
             avg_diff_y = np.mean([d["diff_y"] for d in diffs])
             avg_distance = np.mean([d["distance"] for d in diffs])
-
             if avg_distance < 0.1:
-                continue  # 差异太小，不生成建议
+                continue
 
-            # 生成建议
-            suggestion = {
-                "id": part,  # 使用部位作为唯一标识符
-                "text": "",  # 建议内容
-            }
+            suggestion = {"id": part, "text": ""}
 
+            # 根据方向生成箭头指令
             if abs(avg_diff_y) > abs(avg_diff_x) * 1.5:
-                # 垂直方向差异更大
+                # 垂直移动
                 if avg_diff_y > 0:
-                    suggestion["text"] = f"你的{chinese_part}整体位置偏高啦，试着微微放低并后移重心，能让体态更舒展自然~"  # 加入“重心转移”（书里核心技巧）
+                    suggestion["text"] = f"⬆ 请向上移动一点（{chinese_part}偏低）"
                 else:
-                    suggestion["text"]  = f"你的{chinese_part}整体位置偏低啦，轻轻抬高并让身体微侧（避开正对镜头），比例会更协调~"  # 加入“身体微侧避僵硬”（书里基础原则）
+                    suggestion["text"] = f"⬇ 请向下移动一点（{chinese_part}偏高）"
             elif abs(avg_diff_x) > abs(avg_diff_y) * 1.5:
-                # 水平方向差异更大
+                # 水平移动
                 if avg_diff_x > 0:
-                    suggestion["text"]  = f"你的{chinese_part}整体偏右啦，轻轻向左调整，同时让手臂与身体留些空隙（避免紧贴显宽），平衡感会更好~"  # 加入“负空间”（书里避误区技巧）
+                    suggestion["text"] = f"⬅ 请向左移动一点（{chinese_part}偏右）"
                 else:
-                    suggestion["text"]  = f"你的{chinese_part}整体偏左啦，轻轻向右调整，搭配肩部微微放松下沉，体态会更舒展协调~"  # 加入“肩颈放松”（书里面部+身体摆姿）
+                    suggestion["text"] = f"➡ 请向右移动一点（{chinese_part}偏左）"
             else:
-                # 对角方向差异
+                # 对角方向
                 if avg_diff_x > 0 and avg_diff_y > 0:
-                    suggestion["text"]  = f"你的{chinese_part}整体偏右上方啦，向左下方调整的同时，让重心移到后脚，能让体态更稳更协调~"  # 加入“重心转移”
+                    suggestion["text"] = f"↖ 请向左上移动一点（{chinese_part}偏右下）"
                 elif avg_diff_x < 0 and avg_diff_y > 0:
-                    suggestion["text"]  = f"你的{chinese_part}整体偏左上方啦，往右下方向调整，同时让身体微侧15°（避开正对镜头的僵硬感），姿态会更自然~"  # 加入“身体微侧”
+                    suggestion["text"] = f"↗ 请向右上移动一点（{chinese_part}偏左下）"
                 elif avg_diff_x > 0 and avg_diff_y < 0:
-                    suggestion["text"]  = f"你的{chinese_part}整体偏右下方啦，向左上方调整，搭配腿部微微弯曲（创造曲线感），状态会更松弛好看~"  # 加入“曲线创造”（书里女士美姿）
+                    suggestion["text"] = f"↙ 请向左下移动一点（{chinese_part}偏右上）"
                 else:
-                    suggestion["text"]  = f"你的{chinese_part}整体偏左下方啦，往右上方向调整，同时轻抬下巴（避免双下巴），整体体态会更精致~"  # 加入“下巴调整”（书里面部摆姿）
+                    suggestion["text"] = f"↘ 请向右下移动一点（{chinese_part}偏左上）"
 
-
-            # 添加补充建议到每个部位的建议中
+            # 补充可执行动作
             if part == "shoulders":
-                suggestion["text"] += " 试着轻轻放松肩膀并微微后展，让手臂与身体留些空隙（避免紧贴显宽），整个人会更松弛自然~"
+                suggestion["text"] += "，肩膀轻微放松后展"
             elif part == "hips":
-                suggestion["text"] += " 试着保持骨盆中立，同时让重心移到一侧腿上（避免僵硬），还能悄悄弱化臀部的视觉宽度~"
+                suggestion["text"] += "，保持骨盆中立，重心移到一侧腿"
             elif part == "face":
-                suggestion["text"] += " 保持面部自然放松，轻抬下巴并让眼神看向镜头上方3cm（更灵动不生硬），状态会更精致好看~"
+                suggestion["text"] += "，下巴微抬，眼神看向镜头上方3cm"
+
             suggestions.append(suggestion)
 
-
-        return suggestions[:5]  # 最多返回5条建议
+        return suggestions
 
     def get_detailed_analysis(self, differences):
         """获取详细的身体部位分析"""
@@ -382,68 +373,6 @@ class PoseAnalyzer:
 
         return analysis
 
-
-# def test_pose_analyzer():
-#     """测试姿势分析器"""
-#     print("=" * 60)
-#     print("🧪 姿势分析器测试")
-#     print("=" * 60)
-#
-#     analyzer = PoseAnalyzer()
-#
-#     if not analyzer.standard_poses:
-#         print("❌ 没有可用的标准姿势数据")
-#         return
-#
-#     print(f"\n📚 可用的标准姿势: {list(analyzer.standard_poses.keys())}")
-#
-#     # 用第一个标准姿势模拟用户姿势（加一些噪声）
-#     first_pose_name = list(analyzer.standard_poses.keys())[0]
-#     std_keypoints = analyzer.standard_poses[first_pose_name]["keypoints"]
-#
-#     print(f"\n🔬 测试姿势: {first_pose_name}")
-#     print(f"关键点数量: {len(std_keypoints)}")
-#
-#     # 创建模拟的用户姿势（添加一些随机差异）
-#     import random
-#     user_keypoints = []
-#     for kp in std_keypoints:
-#         user_keypoints.append({
-#             "id": kp["id"],
-#             "x": kp["x"] + random.uniform(-0.08, 0.08),  # 添加随机噪声
-#             "y": kp["y"] + random.uniform(-0.08, 0.08),
-#             "z": kp["z"],
-#             "visibility": kp["visibility"]
-#         })
-#
-#     print("\n📊 开始姿势对比分析...")
-#
-#     # 进行分析
-#     result = analyzer.compare_poses(user_keypoints, first_pose_name)
-#
-#     if "error" in result:
-#         print(f"❌ 分析出错: {result['error']}")
-#         return
-#
-#     print(f"\n📈 分析结果:")
-#     print(f"  🎯 标准姿势: {result['standard_pose']}")
-#     print(f"  📊 得分: {result['score']}/100")
-#     print(f"  ✅ 是否合格: {'是' if result['is_good'] else '否'}")
-#
-#     if result['suggestions']:
-#         print(f"\n💡 改进建议:")
-#         for i, suggestion in enumerate(result['suggestions'], 1):
-#             print(f"  {i}. {suggestion}")
-#     else:
-#         print(f"\n🎉 姿势完美！")
-#
-#     # 显示详细分析
-#     if 'detailed_analysis' in result:
-#         print(f"\n🔍 详细部位分析:")
-#         for part, data in result['detailed_analysis'].items():
-#             print(f"  {part}: 准确率{data.get('accuracy_rate', 0):.1f}%")
-#
-#     print(f"\n✅ 测试完成")
 
 
 if __name__ == "__main__":

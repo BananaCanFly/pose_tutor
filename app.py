@@ -1,4 +1,6 @@
 # app.py - AI姿势教练主应用
+import queue
+
 import streamlit as st
 import cv2
 import tempfile
@@ -11,7 +13,9 @@ from PIL import Image
 import json
 import matplotlib
 matplotlib.use("Agg")
-
+import threading
+from vosk import Model, KaldiRecognizer
+import sounddevice as sd
 
 # 导入我们的模块
 try:
@@ -19,7 +23,7 @@ try:
     from realtime_extractor import PoseExtractor
     from pose_analyzer import PoseAnalyzer
     from simple_avatar import SimpleAvatar
-    from CompositionAnalyzer import analyze_crop_and_zoom
+    from CompositionAnalyzer import analyze_crop_and_zoom, compute_bbox
 except ImportError as e:
     st.error(f"导入模块出错: {e}")
     st.stop()
@@ -92,6 +96,77 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def draw_soft_bbox(img, bbox,
+                   color=(0, 180, 255),
+                   alpha=0.25,
+                   radius=18,
+                   thickness=4):
+    overlay = img.copy()
+
+    x1, y1, x2, y2 = map(int, list(bbox))
+
+    # 四条边（不封死，留呼吸感）
+    cv2.line(overlay, (x1+radius, y1), (x2-radius, y1), color, thickness)
+    cv2.line(overlay, (x1+radius, y2), (x2-radius, y2), color, thickness)
+    cv2.line(overlay, (x1, y1+radius), (x1, y2-radius), color, thickness)
+    cv2.line(overlay, (x2, y1+radius), (x2, y2-radius), color, thickness)
+
+    # 四个角
+    cv2.ellipse(overlay, (x1+radius, y1+radius), (radius, radius), 180, 0, 90, color, thickness)
+    cv2.ellipse(overlay, (x2-radius, y1+radius), (radius, radius), 270, 0, 90, color, thickness)
+    cv2.ellipse(overlay, (x2-radius, y2-radius), (radius, radius), 0, 0, 90, color, thickness)
+    cv2.ellipse(overlay, (x1+radius, y2-radius), (radius, radius), 90, 0, 90, color, thickness)
+
+    return cv2.addWeighted(overlay, alpha, img, 1-alpha, 0)
+
+def draw_center_indicator(img, center,
+                          size=16,
+                          color=(255, 200, 0)):
+    cx, cy = [int(i) for i in center]
+
+    # 外圈
+    cv2.circle(img, (cx, cy), size, color, 2)
+    # 中心点
+    cv2.circle(img, (cx, cy), 3, color, -1)
+
+    # 十字
+    cv2.line(img, (cx-size, cy), (cx+size, cy), color, 1)
+    cv2.line(img, (cx, cy-size), (cx, cy+size), color, 1)
+
+def draw_direction_arrow(img, from_pt, to_pt,
+                         color=(0, 180, 255)):
+    cv2.arrowedLine(
+        img,
+        tuple(map(int, from_pt)),
+        tuple(map(int, to_pt)),
+        color,
+        2,
+        tipLength=0.25
+    )
+
+def draw_score_bar(img, score,
+                   pos=(20, 20),
+                   size=(300, 26)):
+    x, y = pos
+    w, h = size
+
+    bg = img.copy()
+    fg = img.copy()
+
+    cv2.rectangle(bg, (x+2, y+2), (x+w+2, y+h+2), (0,0,0), -1)
+    cv2.rectangle(bg, (x, y), (x+w, y+h), (220,220,220), -1)
+
+    fill_w = int(w * score / 100)
+    color = (0,180,0) if score >= 70 else (0,0,180)
+    cv2.rectangle(fg, (x, y), (x+fill_w, y+h), color, -1)
+
+    img[:] = cv2.addWeighted(bg, 0.6, img, 0.4, 0)
+    img[:] = cv2.addWeighted(fg, 0.9, img, 0.1, 0)
+
+    cv2.putText(img, f"{int(score)}",
+                (x+w+10, y+h-6),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (60,60,60), 2)
 
 
 class PoseCoachApp:
@@ -108,9 +183,10 @@ class PoseCoachApp:
     def process_realtime_frame(
             self,
             frame,
+            bbox,
             selected_pose=None,
             prev_analysis=None,
-            score_threshold=SCORE_DIFF_THRESHOLD
+            score_threshold=SCORE_DIFF_THRESHOLD,
     ):
         """
         实时处理单帧：
@@ -118,6 +194,7 @@ class PoseCoachApp:
         - 左下角：目标姿势骨架（始终显示）
         """
 
+        height, width = frame.shape[:2]
         # ======================
         # 1️⃣ 提取用户关键点
         # ======================
@@ -192,21 +269,35 @@ class PoseCoachApp:
             )
 
         # ======================
+        # 构图可视化（美观版）
+        # ======================
+
+        output_frame = draw_soft_bbox(
+            output_frame,
+            bbox["bbox"]
+        )
+
+        draw_center_indicator(
+            output_frame,
+            bbox["center"],
+        )
+
+        cx, cy = bbox["center"]
+        ox, oy = width/2, height/2
+        # 如果需要引导移动
+        if abs(cx - ox) > 10 or abs(cy - oy) > 10:
+            draw_direction_arrow(
+                output_frame,
+                (width/2, height/2),
+                (cx, cy)
+            )
+
+        # ======================
         # 7️⃣ 叠加评分与目标名称
         # ======================
         score = analysis.get("score", 0)
-        score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
-
-        # 绘制进度条
-        bar_width = 300  # 进度条的宽度
-        bar_height = 25  # 进度条的高度
-        progress = int((score / 100) * bar_width)  # 映射分数到进度条宽度
-
-        # 绘制背景矩形（灰色）
-        cv2.rectangle(output_frame, (20, 20), (20 + bar_width, 20 + bar_height), (200, 200, 200), -1)
-
-        # 绘制前景矩形（进度条）
-        cv2.rectangle(output_frame, (20, 20), (20 + progress, 20 + bar_height), score_color, -1)
+        # score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
+        draw_score_bar(output_frame, score)
 
         # ======================
         # 8️⃣ 返回完整状态
@@ -219,76 +310,224 @@ class PoseCoachApp:
             "user_keypoints": keypoints,
             "std_keypoints": std_keypoints  # ⭐ 关键：缓存模板关键点
         }
+current_suggestions = []
 
+def get_main_voice_suggestion():
+    print(current_suggestions)
+    if not current_suggestions:
+        return "你的姿势整体很好，可以保持"
 
+    # 只播报第一条（最重要）
+    return current_suggestions[0]["text"][1:]
 
 def display_camera_suggestions(suggestions):
+    need_modify = [s for s in suggestions if s["need_modify"]]
+    modified = [s for s in suggestions if not s["need_modify"]]
+
+    main_camera_suggestion = need_modify[0] if need_modify else None
     st.markdown("### 💡 相机操纵建议")
 
-    for suggestion in suggestions:
-        # 判断是否需要修改并设置颜色
-        if suggestion["need_modify"]:
-            color = "#FF4B4B"  # 红色警告
-            icon = "⚠️"
-            bg_color = "#FFEAEA"
-            status = "待修改"
-        else:
-            color = "#4CAF50"  # 绿色确认
-            icon = "✅"
-            bg_color = "#E8F8F0"
-            status = "已修改"
-
-        # 使用 HTML 卡片样式展示
+    if main_camera_suggestion:
+        s = main_camera_suggestion
         st.markdown(f"""
         <div style="
-            border: 1px solid {color};
-            border-radius: 10px;
-            padding: 15px;
-            margin: 5px 0;
-            background-color: {bg_color};
+            border: 2px solid #FF4B4B;
+            border-radius: 12px;
+            padding: 18px;
+            background-color: #FFEAEA;
         ">
-            <span style="font-size:18px; font-weight:bold; color:{color}">{icon} {suggestion['text']}</span>
+            <div style="font-size:20px; font-weight:600; color:#FF4B4B">
+                ⚠️ 当前需要调整
+            </div>
+            <p style="margin-top:8px; font-size:17px; color:#333">
+                {s['text']}
+            </p>
+            <p style="font-size:14px; color:#888">
+                请优先完成此项，其余操纵建议已隐藏
+            </p>
         </div>
         """, unsafe_allow_html=True)
+    else:
+        st.success("✅ 当前相机角度已符合所有建议")
+    with st.expander("📋 查看详情", expanded=False):
+
+        # 其余未修改的相机建议
+        if len(need_modify) > 1:
+            st.markdown("#### ⚠️ 其他待修改的相机建议")
+            for s in need_modify[1:]:
+                st.markdown(f"""
+                <div style="
+                    border: 1px solid #FFB3B3;
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin: 6px 0;
+                    background-color: #FFF3F3;
+                ">
+                    <b style="color:#FF4B4B">⚠️ 待修改</b>
+                    <p style="margin:4px 0">{s['text']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # 已修改的相机建议
+        if modified:
+            st.markdown("#### ✅ 已修改的相机建议")
+            for s in modified:
+                st.markdown(f"""
+                <div style="
+                    border: 1px solid #4CAF50;
+                    border-radius: 8px;
+                    padding: 10px;
+                    margin: 6px 0;
+                    background-color: #E8F8F0;
+                ">
+                    <b style="color:#4CAF50">✅ 已修改</b>
+                    <p style="margin:4px 0">{s['text']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # st.markdown("### 💡 相机操纵建议")
+    #
+    # for suggestion in suggestions:
+    #     # 判断是否需要修改并设置颜色
+    #     if suggestion["need_modify"]:
+    #         color = "#FF4B4B"  # 红色警告
+    #         icon = "⚠️"
+    #         bg_color = "#FFEAEA"
+    #         status = "待修改"
+    #     else:
+    #         color = "#4CAF50"  # 绿色确认
+    #         icon = "✅"
+    #         bg_color = "#E8F8F0"
+    #         status = "已修改"
+    #
+    #     # 使用 HTML 卡片样式展示
+    #     st.markdown(f"""
+    #     <div style="
+    #         border: 1px solid {color};
+    #         border-radius: 10px;
+    #         padding: 15px;
+    #         margin: 5px 0;
+    #         background-color: {bg_color};
+    #     ">
+    #         <span style="font-size:18px; font-weight:bold; color:{color}">{icon} {suggestion['text']}</span>
+    #     </div>
+    #     """, unsafe_allow_html=True)
         # """<p style="margin:5px 0; color:#333; font-size:16px">状态: {status}</p>"""
 
 
 def display_suggestions_ui(total_suggestions, current_suggestions):
-    # st.markdown("### 💡 姿势建议总览")
-
-    st.markdown("### 💡 姿势建议")
-    # 获取实时建议的ID集合
     current_ids = {s['id'] for s in current_suggestions}
 
-    # 遍历总建议
-    for s in total_suggestions:
-        if s['id'] in current_ids:
-            # 未实现建议 → 红色警示
-            color = "#FF4B4B"
-            icon = "⚠️"
-            bg_color = "#FFEAEA"
-        else:
-            # 已实现建议 → 绿色 ✅
-            color = "#4CAF50"
-            icon = "✅"
-            bg_color = "#E8F8F0"
+    unfixed = [s for s in total_suggestions if s['id'] in current_ids]
+    fixed = [s for s in total_suggestions if s['id'] not in current_ids]
+    main_suggestion = unfixed[0] if unfixed else None
 
-        # 使用 HTML 卡片样式展示
+    st.markdown("### 💡 姿势建议")
+
+    if main_suggestion:
+        s = main_suggestion
         st.markdown(f"""
         <div style="
-            border: 1px solid {color};
-            border-radius: 10px;
-            padding: 15px;
-            margin: 5px 0;
-            background-color: {bg_color};
+            border: 2px solid #FF4B4B;
+            border-radius: 12px;
+            padding: 18px;
+            background-color: #FFEAEA;
         ">
-            <span style="font-size:18px; font-weight:bold; color:{color}">{icon} {s['id']}</span>
-            <p style="margin:5px 0; color:#333; font-size:16px">{s['text']}</p>
+            <div style="font-size:20px; font-weight:600; color:#FF4B4B">
+                ⚠️ {s['id']}
+            </div>
+            <p style="margin-top:8px; font-size:17px; color:#333">
+                {s['text']}
+            </p>
+            <p style="font-size:14px; color:#888">
+                请优先完成此项，其余建议可在下方查看
+            </p>
         </div>
         """, unsafe_allow_html=True)
+    else:
+        st.success("✅ 当前姿势已满足所有建议")
+
+    with st.expander("📋 查看详情", expanded=False):
+
+        # 其余未改正建议
+        if len(unfixed) > 1:
+            st.markdown("#### ⚠️ 其他未改正建议")
+            for s in unfixed[1:]:
+                st.markdown(f"""
+                <div style="
+                    border: 1px solid #FFB3B3;
+                    border-radius: 8px;
+                    padding: 12px;
+                    margin: 6px 0;
+                    background-color: #FFF3F3;
+                ">
+                    <b style="color:#FF4B4B">⚠️ {s['id']}</b>
+                    <p style="margin:4px 0">{s['text']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # 已改正建议
+        if fixed:
+            st.markdown("#### ✅ 已改正建议")
+            for s in fixed:
+                st.markdown(f"""
+                <div style="
+                    border: 1px solid #4CAF50;
+                    border-radius: 8px;
+                    padding: 10px;
+                    margin: 6px 0;
+                    background-color: #E8F8F0;
+                ">
+                    <b style="color:#4CAF50">✅ {s['id']}</b>
+                    <p style="margin:4px 0">{s['text']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+    # st.markdown("### 💡 姿势建议")
+    #
+    #
+    # # 获取实时建议的ID集合
+    # current_ids = {s['id'] for s in current_suggestions}
+    #
+    # # 遍历总建议
+    # for s in total_suggestions:
+    #     if s['id'] in current_ids:
+    #         # 未实现建议 → 红色警示
+    #         color = "#FF4B4B"
+    #         icon = "⚠️"
+    #         bg_color = "#FFEAEA"
+    #     else:
+    #         # 已实现建议 → 绿色 ✅
+    #         color = "#4CAF50"
+    #         icon = "✅"
+    #         bg_color = "#E8F8F0"
+    #
+    #     # 使用 HTML 卡片样式展示
+    #     st.markdown(f"""
+    #     <div style="
+    #         border: 1px solid {color};
+    #         border-radius: 10px;
+    #         padding: 15px;
+    #         margin: 5px 0;
+    #         background-color: {bg_color};
+    #     ">
+    #         <span style="font-size:18px; font-weight:bold; color:{color}">{icon} {s['id']}</span>
+    #         <p style="margin:5px 0; color:#333; font-size:16px">{s['text']}</p>
+    #     </div>
+    #     """, unsafe_allow_html=True)
 
 
 def main():
+    from VoiceAssistent import VoiceAssistant
+
+    voice = VoiceAssistant(
+        model_path="models/vosk-model-small-cn-0.22",
+        get_suggestion_func=get_main_voice_suggestion,
+        cooldown=6.0,  # 防止太吵
+    )
+
+    voice.start()
+
     if "realtime_running" not in st.session_state:
         st.session_state.realtime_running = False
 
@@ -306,6 +545,11 @@ def main():
 
     # 加载 YOLOv5 模型（使用预训练权重）
     yolo_model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+    yolo_model.classes = [0]
+    yolo_model.conf = 0.4
+    yolo_model.iou = 0.5
+    yolo_model.max_det = 1
+    # print(next(yolo_model.parameters()).device)
 
     # 主界面
     col1, col2, col3 = st.columns([3, 4, 3])
@@ -348,6 +592,8 @@ def main():
 
         video_box = st.empty()
 
+        camera_suggestion = []
+
         if start_btn:
             # cap = cv2.VideoCapture(0)
             cap = cv2.VideoCapture(1)
@@ -361,6 +607,8 @@ def main():
                 frame_count = 0
                 prev_analysis = None  # 保存上一次分析结果
                 global_total_suggestions = None
+
+
                 while True:
                     ret, frame = cap.read()
                     if not ret:
@@ -370,11 +618,25 @@ def main():
                     if stop_btn:
                         break
 
+                    height, width = frame.shape[:2]
+                    bbox_result = compute_bbox(frame, PoseExtractor().extract_from_frame(frame), yolo_model)
+
+                    cached_bbox = {
+                        "center": bbox_result["target_center"],
+                        "bbox": bbox_result["bbox"],
+                        "scale": bbox_result["scale"],
+                    }
+
+                    # print(cached_bbox)
+
                     # 1️⃣ 姿势分析每 FRAME_COUNT_EVERY_PROCESS 帧执行一次
                     if frame_count % FRAME_COUNT_EVERY_PROCESS == 0:
+                        camera_suggestion = analyze_crop_and_zoom(frame, PoseExtractor().extract_from_frame(frame),
+                                                                  yolo_model)
                         # 实时处理
                         result = app.process_realtime_frame(
                             frame,
+                            cached_bbox,
                             selected_pose if 'selected_pose' in locals() else None,
                             prev_analysis=prev_analysis
                         )
@@ -412,20 +674,31 @@ def main():
                             if prev_analysis and prev_analysis.get("analysis"):
                                 analysis = prev_analysis["analysis"]
                                 score = analysis.get("score", 0)
-                                score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
+                                # score_color = (0, 255, 0) if score >= 70 else (0, 0, 255)
+
+                                overlay_frame = draw_soft_bbox(
+                                    overlay_frame,
+                                    cached_bbox["bbox"]
+                                )
+
+                                draw_center_indicator(
+                                    overlay_frame,
+                                    cached_bbox["center"],
+                                )
+
+                                cx, cy = cached_bbox["center"]
+                                ox, oy = width/2, height/2
+                                # 如果需要引导移动
+                                if abs(cx - ox) > 10 or abs(cy - oy) > 10:
+                                    draw_direction_arrow(
+                                        overlay_frame,
+                                        (ox, oy),
+                                        (cx, cy)
+                                    )
+
                                 # ---- 绘制进度条 ----
-                                bar_width = 300  # 进度条的宽度
-                                bar_height = 25  # 进度条的高度
-                                progress = int((score / 100) * bar_width)  # 映射分数到进度条宽度
 
-                                # 绘制背景矩形（灰色）
-                                cv2.rectangle(overlay_frame, (20, 20), (20 + bar_width, 20 + bar_height),
-                                              (200, 200, 200),
-                                              -1)
-
-                                # 绘制前景矩形（进度条）
-                                cv2.rectangle(overlay_frame, (20, 20), (20 + progress, 20 + bar_height), score_color,
-                                              -1)
+                                draw_score_bar(overlay_frame, score)
 
                         else:
                             overlay_frame = frame.copy()
@@ -437,7 +710,6 @@ def main():
                             posture_suggestions = analysis.get("suggestions", [])
 
                             # 获取裁剪和缩放建议
-                            camera_suggestion = analyze_crop_and_zoom(frame, PoseExtractor().extract_from_frame(frame), yolo_model)
 
                             suggestions = []
 
@@ -452,7 +724,22 @@ def main():
 
                             suggestions = suggestions[:3]
 
+
+
                             with suggestion_box.container():
+                                st.markdown(f"""
+                                    <div style="
+                                        border: 1px solid #4DA3FF;
+                                        border-radius: 10px;
+                                        padding: 15px;
+                                        margin: 5px 0;
+                                        background-color: #EAF4FF;
+                                    ">
+                                        <span style="font-size:18px; font-weight:bold; color:#4DA3FF">
+                                            建议缩放：{cached_bbox['scale']}倍
+                                        </span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
                                 display_camera_suggestions(camera_suggestion)
                                 if not suggestions:
                                     st.success("姿势良好，请继续保持")
@@ -463,6 +750,10 @@ def main():
                                     # with col2:
 
                                     display_suggestions_ui(global_total_suggestions, suggestions)
+
+                                    current_suggestions.clear()
+                                    current_suggestions.extend(suggestions)  # ✅ 修改原列表内容
+                                    # print(current_suggestions)
 
                     # ===== 显示摄像头画面 =====
                     video_box.image(overlay_frame, channels="BGR")
