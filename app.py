@@ -596,7 +596,7 @@ def main():
 
         if start_btn:
             # cap = cv2.VideoCapture(0)
-            cap = cv2.VideoCapture(1)
+            cap = cv2.VideoCapture(3)
             if not cap.isOpened():
                 st.error("无法打开摄像头")
             else:

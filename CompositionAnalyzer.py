@@ -174,134 +174,208 @@ def estimate_knee_height(landmarks, visibility_threshold=0.5):
     return None
 
 
-def analyze_crop_and_zoom(frame, keypoints, model):
-    """
-    分析拍照建议，包括头部留白、膝盖脚踝裁剪、胳膊显示、人物居中等
-    参数:
-    - frame: 当前帧图像（OpenCV格式）
-    - keypoints: 人物的关键点列表，包含头部、肩膀、肘部、膝盖、脚踝等部位的坐标
+# def analyze_crop_and_zoom(frame, keypoints, yolo_box):
+#     """
+#     分析拍照建议，包括头部留白、膝盖脚踝裁剪、胳膊显示、人物居中等
+#     参数:
+#     - frame: 当前帧图像（OpenCV格式）
+#     - keypoints: 人物的关键点列表，包含头部、肩膀、肘部、膝盖、脚踝等部位的坐标
+#
+#     返回:
+#     - dict: 包含裁剪和缩放建议的信息
+#     """
+#
+#     # print(keypoints)
+#     suggestions = []
+#     height, width = frame.shape[:2]
+#
+#     # 获取关键点
+#     # head_y = keypoints[0]['y']  # 头部位置
+#     # shoulder_left_y = keypoints[11]['y']  # 左肩
+#     # shoulder_right_y = keypoints[12]['y']  # 右肩
+#     knee_left_y = keypoints[25]['y']  # 左膝
+#     knee_right_y = keypoints[26]['y']  # 右膝
+#     ankle_left_y = keypoints[27]['y']  # 左脚踝
+#     ankle_right_y = keypoints[28]['y']  # 右脚踝
+#     # elbow_left_x = keypoints[13]['x']  # 左肘
+#     # elbow_right_x = keypoints[14]['x']  # 右肘
+#     # wrist_left_y = keypoints[15]['y']  # 左手腕
+#     # wrist_right_y = keypoints[16]['y']  # 右手腕
+#
+#     # 1. 先降分辨率（非常关键）
+#
+#     frame = cv2.resize(frame, (320, 320))
+#     edge_frame = mask_hip_below(frame, keypoints)
+#
+#     elbow_left_x, foot_y, elbow_right_x, head_y = yolo_box
+#     # head_y = get_highest_point(edge_frame, results)
+#     # elbow_left_x, elbow_right_x = get_edge_point(frame, results)
+#
+#     # 计算头部上方的留白（理想高度为头部的20%-30%）
+#     # print("头顶高度:", get_highest_point(edge_frame, results))
+#     head_height = abs(keypoints[0]['y'] - head_y)  # 头部高度
+#     head_margin = head_height * 0.4  # 留白高度（头部高度的20%）
+#
+#     # print(head_height, head_margin)
+#     # 判断头部是否靠近画面顶部
+#     if head_y < head_margin:
+#         suggestions.append(
+#             {"id": "留白", "text": "⬆ 请向上移动一点（头顶空间不足）", "need_modify": True}
+#         )
+#     # else:
+#     #     suggestions.append(
+#     #         {"id": "留白", "text": "✅ 头顶留白足够", "need_modify": False}
+#     #     )
+#
+#
+#     # if knee_y > 0.95:
+#     if 1 > knee_left_y > 0.95 or 1 > knee_right_y > 0.95:
+#         suggestions.append(
+#             {"id": "关节", "text": "⬆ 请向上移动一点（膝盖部分被裁剪）", "need_modify": True}
+#         )
+#     elif 1.02 > ankle_left_y > 0.95 or 1.02 > ankle_right_y > 0.95:
+#         suggestions.append(
+#             {"id": "关节", "text": "⬇ 请向下移动一点（脚踝部分被裁剪）", "need_modify": True}
+#         )
+#     # else:
+#     #     suggestions.append(
+#     #         {"id": "关节", "text": "✅ 关节完整显示", "need_modify": False}
+#     #     )
+#
+#     # 判断胳膊是否完全可见
+#     # if 0.02<elbow_left_x<0.98 and 0.02<elbow_right_x<0.98:
+#     #     suggestions.append(
+#     #         {"id": "胳膊", "text": "胳膊已完整露出，无需调整", "need_modify": False}
+#     #     )
+#     # else:
+#     #     suggestions.append(
+#     #         {"id": "胳膊", "text": "建议调整，胳膊部分不可见，可能需要缩放或调整角度", "need_modify": True}
+#     #     )
+#     if elbow_left_x<0.02 and elbow_right_x>0.98:
+#         suggestions.append(
+#             {"id": "胳膊", "text": "⬆/⬇ 缩放画面（两侧胳膊均部分不可见）", "need_modify": True}
+#         )
+#     elif elbow_left_x<0.02:
+#         suggestions.append(
+#             {"id": "胳膊", "text": "⬅ 请左移一点（左侧胳膊不可见）", "need_modify": True}
+#         )
+#     elif elbow_right_x>0.98:
+#         suggestions.append(
+#             {"id": "胳膊", "text": "➡ 请右移一点（右侧胳膊不可见）", "need_modify": True}
+#         )
+#     # else:
+#     #     suggestions.append(
+#     #         {"id": "胳膊", "text": "✅ 胳膊完整显示", "need_modify": False}
+#     #     )
+#
+#     # 判断人物是否居中
+#     center_x = width // 2
+#     head_center_x = (keypoints[0]['x'] + keypoints[1]['x'] + keypoints[2]['x']) / 3
+#     shoulder_center_x = (keypoints[1]['x'] + keypoints[2]['x']) / 2
+#     person_center_x = (head_center_x + shoulder_center_x) / 2
+#     # print(head_center_x, shoulder_center_x, person_center_x, center_x)
+#     if abs(person_center_x - 0.5) > 0.1:
+#         if person_center_x < 0.5:
+#             suggestions.append(
+#                 {"id": "中心", "text": "➡ 请右移一点（人物偏左）", "need_modify": True}
+#             )
+#         else:
+#             suggestions.append(
+#                 {"id": "中心", "text": "⬅ 请左移一点（人物偏右）", "need_modify": True}
+#             )
+#     # else:
+#     #     suggestions.append(
+#     #         {"id": "中心", "text": "✅ 人物居中良好", "need_modify": False}
+#     #     )
+#
+#     # # 判断是否需要缩放（通过肩膀宽度来判断）
+#     # shoulder_width = abs(keypoints[1]['x'] - keypoints[2]['x'])  # 计算肩膀宽度
+#     # zoom_suggestion = ""
+#     # if shoulder_width < width * 0.2:
+#     #     zoom_suggestion = "建议放大，人物显得太小"
+#     # elif shoulder_width > width * 0.6:
+#     #     zoom_suggestion = "建议缩小，人物占据空间过大"
+#     return suggestions
 
-    返回:
-    - dict: 包含裁剪和缩放建议的信息
+def analyze_crop_and_zoom(frame, keypoints, yolo_box):
     """
-
-    # print(keypoints)
+    智能拍照指导逻辑：检测构图禁忌并给出调整建议
+    """
     suggestions = []
-    height, width = frame.shape[:2]
+    h_img, w_img = frame.shape[:2]
 
-    # 获取关键点
-    # head_y = keypoints[0]['y']  # 头部位置
-    # shoulder_left_y = keypoints[11]['y']  # 左肩
-    # shoulder_right_y = keypoints[12]['y']  # 右肩
-    knee_left_y = keypoints[25]['y']  # 左膝
-    knee_right_y = keypoints[26]['y']  # 右膝
-    ankle_left_y = keypoints[27]['y']  # 左脚踝
-    ankle_right_y = keypoints[28]['y']  # 右脚踝
-    # elbow_left_x = keypoints[13]['x']  # 左肘
-    # elbow_right_x = keypoints[14]['x']  # 右肘
-    # wrist_left_y = keypoints[15]['y']  # 左手腕
-    # wrist_right_y = keypoints[16]['y']  # 右手腕
-
-    # 1. 先降分辨率（非常关键）
-
-    frame = cv2.resize(frame, (320, 320))
-    edge_frame = mask_hip_below(frame, keypoints)
-
-    # 2. YOLO 可以直接吃 BGR（不需要手动转 RGB）
-    # 3. 关闭梯度 + 指定类别 + 指定设备
-    with torch.no_grad():
-        results = model(edge_frame)
-
-    head_y = get_highest_point(edge_frame, results)
-    elbow_left_x, elbow_right_x = get_edge_point(frame, results)
-
-    # 计算头部上方的留白（理想高度为头部的20%-30%）
-    # print("头顶高度:", get_highest_point(edge_frame, results))
-    head_height = abs(keypoints[0]['y'] - head_y)  # 头部高度
-    head_margin = head_height * 0.4  # 留白高度（头部高度的20%）
-
-    # print(head_height, head_margin)
-    # 判断头部是否靠近画面顶部
-    if head_y < head_margin:
-        suggestions.append(
-            {"id": "留白", "text": "⬆ 请向上移动一点（头顶空间不足）", "need_modify": True}
-        )
+    # 1. 安全解包 YOLO BBox (像素坐标)
+    if yolo_box is not None and len(yolo_box) == 4:
+        # yolo_box 格式: [x1, y1, x2, y2]
+        y_x1, y_y1, y_x2, y_y2 = yolo_box
+        # 归一化 YOLO 坐标，方便与 0.0-1.0 比较
+        ny1, ny2 = y_y1 / h_img, y_y2 / h_img
+        nx1, nx2 = y_x1 / w_img, y_x2 / w_img
     else:
-        suggestions.append(
-            {"id": "留白", "text": "✅ 头顶留白足够", "need_modify": False}
-        )
-    # print(estimate_knee_height(keypoints))
-    # print(knee_left_y, knee_right_y, ankle_left_y, ankle_right_y, height)
-    # 判断膝盖和脚踝是否被裁剪
-    knee_y = estimate_knee_height(keypoints)
+        ny1 = ny2 = nx1 = nx2 = None
 
-    # if knee_y > 0.95:
-    if 1 > knee_left_y > 0.95 or 1 > knee_right_y > 0.95:
-        suggestions.append(
-            {"id": "关节", "text": "⬆ 请向上移动一点（膝盖部分被裁剪）", "need_modify": True}
-        )
-    elif 1.02 > ankle_left_y > 0.95 or 1.02 > ankle_right_y > 0.95:
-        suggestions.append(
-            {"id": "关节", "text": "⬇ 请向下移动一点（脚踝部分被裁剪）", "need_modify": True}
-        )
-    else:
-        suggestions.append(
-            {"id": "关节", "text": "✅ 关节完整显示", "need_modify": False}
-        )
+    # 2. 辅助函数：安全获取关键点
+    def get_kp(idx):
+        if idx < len(keypoints):
+            return keypoints[idx]['x'], keypoints[idx]['y']
+        return None, None
 
-    # 判断胳膊是否完全可见
-    # if 0.02<elbow_left_x<0.98 and 0.02<elbow_right_x<0.98:
-    #     suggestions.append(
-    #         {"id": "胳膊", "text": "胳膊已完整露出，无需调整", "need_modify": False}
-    #     )
-    # else:
-    #     suggestions.append(
-    #         {"id": "胳膊", "text": "建议调整，胳膊部分不可见，可能需要缩放或调整角度", "need_modify": True}
-    #     )
-    if elbow_left_x<0.02 and elbow_right_x>0.98:
-        suggestions.append(
-            {"id": "胳膊", "text": "⬆/⬇ 缩放画面（两侧胳膊均部分不可见）", "need_modify": True}
-        )
-    elif elbow_left_x<0.02:
-        suggestions.append(
-            {"id": "胳膊", "text": "⬅ 请左移一点（左侧胳膊不可见）", "need_modify": True}
-        )
-    elif elbow_right_x>0.98:
-        suggestions.append(
-            {"id": "胳膊", "text": "➡ 请右移一点（右侧胳膊不可见）", "need_modify": True}
-        )
-    else:
-        suggestions.append(
-            {"id": "胳膊", "text": "✅ 胳膊完整显示", "need_modify": False}
-        )
+    # 获取核心点
+    nose_x, nose_y = get_kp(0)
+    lk_x, lk_y = get_kp(25)  # 左膝
+    rk_x, rk_y = get_kp(26)  # 右膝
+    la_x, la_y = get_kp(27)  # 左踝
+    ra_x, ra_y = get_kp(28)  # 右踝
 
-    # 判断人物是否居中
-    center_x = width // 2
-    head_center_x = (keypoints[0]['x'] + keypoints[1]['x'] + keypoints[2]['x']) / 3
-    shoulder_center_x = (keypoints[1]['x'] + keypoints[2]['x']) / 2
-    person_center_x = (head_center_x + shoulder_center_x) / 2
-    # print(head_center_x, shoulder_center_x, person_center_x, center_x)
-    if abs(person_center_x - 0.5) > 0.1:
-        if person_center_x < 0.5:
-            suggestions.append(
-                {"id": "中心", "text": "➡ 请右移一点（人物偏左）", "need_modify": True}
-            )
-        else:
-            suggestions.append(
-                {"id": "中心", "text": "⬅ 请左移一点（人物偏右）", "need_modify": True}
-            )
-    else:
-        suggestions.append(
-            {"id": "中心", "text": "✅ 人物居中良好", "need_modify": False}
-        )
+    # --- 策略 A: 头部留白分析 ---
+    # 使用 YOLO 的边界框顶部作为“头顶”参考，MediaPipe 鼻子作为参考点
+    if ny1 is not None and nose_y is not None:
+        head_height_norm = abs(nose_y - ny1)
+        # 理想留白：头顶上方应留出约 0.5 到 1.0 个头部高度的空间
+        if ny1 < 0.05:
+            suggestions.append({"id": "留白", "text": "⬆ 请向上移动镜头（头顶快出界了）", "need_modify": True})
+        elif ny1 > 0.3:
+            suggestions.append({"id": "留白", "text": "⬇ 请向下移动镜头（头顶留白过多）", "need_modify": True})
 
-    # # 判断是否需要缩放（通过肩膀宽度来判断）
-    # shoulder_width = abs(keypoints[1]['x'] - keypoints[2]['x'])  # 计算肩膀宽度
-    # zoom_suggestion = ""
-    # if shoulder_width < width * 0.2:
-    #     zoom_suggestion = "建议放大，人物显得太小"
-    # elif shoulder_width > width * 0.6:
-    #     zoom_suggestion = "建议缩小，人物占据空间过大"
+    # --- 策略 B: 关节裁剪分析 (构图大忌) ---
+    # 摄影原则：不要在关节处裁剪。如果膝盖或脚踝在边缘 5% 范围内，视为裁剪。
+    if lk_y is not None:
+        max_knee_y = max(lk_y, rk_y)
+        max_ankle_y = max(la_y, ra_y)
+
+        if 0.92 < max_knee_y < 0.99:
+            suggestions.append({"id": "关节", "text": "⬆ 请稍向上移（不要从膝盖处截断）", "need_modify": True})
+        elif 0.92 < max_ankle_y < 0.99:
+            suggestions.append({"id": "关节", "text": "⬇ 请稍向下移（不要从脚踝处截断）", "need_modify": True})
+
+    # --- 策略 C: 胳膊与横向空间 ---
+    if nx1 is not None:
+        # 检测左右出界
+        left_out = nx1 < 0.02
+        right_out = nx2 > 0.98
+
+        if left_out and right_out:
+            suggestions.append({"id": "胳膊", "text": "🔍 请远离一点（身体两侧显示不全）", "need_modify": True})
+        elif left_out:
+            suggestions.append({"id": "胳膊", "text": "⬅ 请向左移动（左臂出界）", "need_modify": True})
+        elif right_out:
+            suggestions.append({"id": "胳膊", "text": "➡ 请向右移动（右臂出界）", "need_modify": True})
+
+    # --- 策略 D: 黄金分割与居中 ---
+    if nose_x is not None:
+        # 计算躯干中心（以鼻子和双肩中心为准）
+        person_x_center = nose_x
+        offset = person_x_center - 0.5  # 偏离中心的距离
+
+        if abs(offset) > 0.15:
+            direction = "⬅ 左" if offset > 0 else "➡ 右"
+            suggestions.append({"id": "中心", "text": f"{direction} 移动一点（人物不在中心）", "need_modify": True})
+
+    # --- 策略 E: 姿势评分逻辑补偿 ---
+    # 如果没有任何修改建议，添加一个正面反馈
+    if not suggestions:
+        suggestions.append({"id": "状态", "text": "✅ 构图完美，请保持", "need_modify": False})
+
     return suggestions
 
 
@@ -329,9 +403,202 @@ def choose_scale(scale,
     return selected
 
 
-import numpy as np
-import mediapipe as mp
-import cv2
+def compute_bbox_by_mode(base_frame, keypoints, yolo_box, mode="全身像", target_aspect_ratio=None):
+    h_img, w_img = base_frame.shape[:2]
+    if target_aspect_ratio is None:
+        target_aspect_ratio = w_img / h_img
+
+    # --- 1. 获取关键点像素坐标 ---
+    mp_coords = []
+    if keypoints:
+        is_dict = isinstance(keypoints[0], dict)
+        for kp in keypoints:
+            kx = kp['x'] if is_dict else kp.x
+            ky = kp['y'] if is_dict else kp.y
+            mp_coords.append((kx * w_img, ky * h_img))
+
+    # --- 2. 构图中心与覆盖范围配置 ---
+    # 格式: (中心参考点索引, 覆盖范围参考的关键点数量, 垂直缩放因子)
+    # 垂直缩放因子决定了以中心点发散出去的视野大小
+    comp_config = {
+        "面部特写": {"anchor_idx": [0], "kp_count": 11, "v_scale": 1.5},  # 以鼻子为中心
+        "半身像": {"anchor_idx": [11, 12], "kp_count": 25, "v_scale": 1.2},  # 肩部中点(锁骨)
+        "全身像": {"anchor_idx": [23, 24], "kp_count": 33, "v_scale": 1.1}  # 胯部中点
+    }
+
+    cfg = comp_config.get(mode, comp_config["全身像"])
+
+    # --- 3. 计算中心锚点 (Target Center) ---
+    if mp_coords:
+        anchors = [mp_coords[i] for i in cfg["anchor_idx"] if i < len(mp_coords)]
+        center_x = sum(a[0] for a in anchors) / len(anchors)
+        center_y = sum(a[1] for a in anchors) / len(anchors)
+    else:
+        # 如果没 MP 数据，退而求其次用 YOLO 中心
+        if yolo_box:
+            center_x = (yolo_box[0] + yolo_box[2]) / 2
+            center_y = (yolo_box[1] + yolo_box[3]) / 2
+        else:
+            return {"mode": mode, "bbox": [0, 0, 1, 1], "scale": 1.0}  # 兜底
+
+    # --- 4. 计算覆盖范围 (BBox Size) ---
+    # 获取对应模式的关键点集，计算一个基础跨度
+    selected_kp = mp_coords[:cfg["kp_count"]] if mp_coords else []
+    if selected_kp:
+        xs, ys = zip(*selected_kp)
+        raw_w = (max(xs) - min(xs)) * 1.5  # 适当增加宽度留白
+        raw_h = (max(ys) - min(ys)) * cfg["v_scale"]
+    else:
+        # 只有 YOLO 框时的处理
+        raw_w = (yolo_box[2] - yolo_box[0]) if yolo_box else w_img
+        raw_h = (yolo_box[3] - yolo_box[1]) if yolo_box else h_img
+
+    # --- 5. 按照目标比例锁定最终长宽 ---
+    # 确保框不会比目标比例窄
+    if raw_w / raw_h < target_aspect_ratio:
+        final_h = raw_h
+        final_w = final_h * target_aspect_ratio
+    else:
+        final_w = raw_w
+        final_h = final_w / target_aspect_ratio
+
+    # --- 6. 生成最终边界并防止越界 ---
+    f_x1 = max(0, center_x - final_w / 2)
+    f_y1 = max(0, center_y - final_h / 2)
+    f_x2 = min(w_img, f_x1 + final_w)
+    f_y2 = min(h_img, f_y1 + final_h)
+
+    # 重新修正因越界导致的位移
+    final_w = f_x2 - f_x1
+    final_h = f_y2 - f_y1
+
+    return {
+        "mode": mode,
+        "target_center": (round(center_x / w_img, 4), round(center_y / h_img, 4)),
+        "bbox": [round(f_x1 / w_img, 4), round(f_y1 / h_img, 4), round(f_x2 / w_img, 4), round(f_y2 / h_img, 4)],
+        "scale": round(h_img / final_h, 1) if final_h > 0 else 1.0
+    }
+
+
+
+# def compute_bbox_by_mode(base_frame, keypoints, yolo_box, mode="全身像", target_aspect_ratio=None):
+#     """
+#     智能构图计算：结合 YOLO 稳定性与 MediaPipe 精确度
+#     mode: "面部特写", "半身像", "全身像"
+#     """
+#     # print(f"[构图分析] 当前模式: {mode}")
+#     h_img, w_img = base_frame.shape[:2]
+#
+#     if target_aspect_ratio is None:
+#         target_aspect_ratio = w_img / h_img
+#
+#     # --- 1. 预处理：安全获取关键点像素坐标 ---
+#     mp_coords = []
+#     if keypoints:
+#         try:
+#             # 自动识别是字典 kp['x'] 还是对象 kp.x
+#             is_dict = isinstance(keypoints[0], dict)
+#             for kp in keypoints:
+#                 kx = kp['x'] if is_dict else kp.x
+#                 ky = kp['y'] if is_dict else kp.y
+#                 mp_coords.append((kx * w_img, ky * h_img))
+#         except Exception as e:
+#             print(f"MediaPipe 数据解析异常: {e}")
+#
+#     # --- 2. 模式参数配置 (留白比例) ---
+#     # 定义：(上留白, 下留白, 左右留白)
+#     config = {
+#         "面部特写": (0.5, 0.3, 0.4, 11),  # 取前11点
+#         "半身像": (0.2, 0.15, 0.2, 25),  # 取前25点
+#         "全身像": (0.1, 0.05, 0.1, 33)  # 全取
+#     }
+#     pad_top, pad_bottom, pad_x, kp_count = config.get(mode, config["全身像"])
+#
+#     # --- 3. 确定原始边界 (MP 与 YOLO 融合) ---
+#     selected_mp = mp_coords[:kp_count] if mp_coords else []
+#
+#     # 初始化边界为 None
+#     mp_x1 = mp_y1 = mp_x2 = mp_y2 = None
+#     if selected_mp:
+#         xs, ys = zip(*selected_mp)
+#         mp_x1, mp_y1, mp_x2, mp_y2 = min(xs), min(ys), max(xs), max(ys)
+#
+#     # 安全处理 YOLO 框 (防止 TypeError: cannot unpack non-iterable NoneType object)
+#     y_x1 = y_y1 = y_x2 = y_y2 = None
+#     if yolo_box is not None and len(yolo_box) == 4:
+#         y_x1, y_y1, y_x2, y_y2 = yolo_box
+#
+#     # 逻辑融合：
+#     # 如果是面部特写，完全信任 MediaPipe；否则取 MP 和 YOLO 的并集增强稳定性
+#     if mode == "面部特写" or y_x1 is None:
+#         f_x1, f_y1, f_x2, f_y2 = mp_x1, mp_y1, mp_x2, mp_y2
+#     elif mp_x1 is None:
+#         f_x1, f_y1, f_x2, f_y2 = y_x1, y_y1, y_x2, y_y2
+#     else:
+#         # 融合：取两者并集
+#         f_x1 = min(mp_x1, y_x1)
+#         f_y1 = min(mp_y1, y_y1)
+#         f_x2 = max(mp_x2, y_x2)
+#         f_y2 = max(mp_y2, y_y2)
+#
+#     # 兜底：如果所有算法都没抓到人，返回全图
+#     if f_x1 is None:
+#         return {
+#             "mode": mode,
+#             "target_center": (0.5, 0.5),
+#             "bbox": [0.0, 0.0, 1.0, 1.0],
+#             "scale": 1.0
+#         }
+#
+#     # --- 4. 智能留白与纵横比修正 ---
+#     box_w, box_h = f_x2 - f_x1, f_y2 - f_y1
+#
+#     # 应用初始裁剪（带留白）
+#     cx1 = max(0, f_x1 - box_w * pad_x)
+#     cx2 = min(w_img, f_x2 + box_w * pad_x)
+#     cy1 = max(0, f_y1 - box_h * pad_top)
+#     cy2 = min(h_img, f_y2 + box_h * pad_bottom)
+#
+#     # 纵横比锁定逻辑
+#     curr_w, curr_h = cx2 - cx1, cy2 - cy1
+#     curr_ratio = curr_w / curr_h
+#
+#     if curr_ratio < target_aspect_ratio:
+#         # 太瘦了，补宽度
+#         needed_w = curr_h * target_aspect_ratio
+#         diff = needed_w - curr_w
+#         cx1 -= diff / 2
+#         cx2 += diff / 2
+#     else:
+#         # 太胖了，补高度
+#         needed_h = curr_w / target_aspect_ratio
+#         diff = needed_h - curr_h
+#         cy1 -= diff / 2
+#         cy2 += diff / 2
+#
+#     # 最终像素坐标
+#     final_x1, final_y1 = max(0, cx1), max(0, cy1)
+#     final_x2, final_y2 = min(w_img, cx2), min(h_img, cy2)
+#
+#     # --- 6. 构造响应结构 ---
+#     final_w = final_x2 - final_x1
+#     final_h = final_y2 - final_y1
+#
+#     # 计算相对于原图的缩放倍率
+#     scale = round(h_img / final_h, 1) if final_h > 0 else 1.0
+#
+#     return {
+#         "mode": mode,
+#         "target_center": (round((final_x1 + final_w / 2) / w_img, 4), round((final_y1 + final_h / 2) / h_img, 4)),
+#         "bbox": [
+#             round(final_x1 / w_img, 4),
+#             round(final_y1 / h_img, 4),
+#             round(final_x2 / w_img, 4),
+#             round(final_y2 / h_img, 4)
+#         ],
+#         "scale": scale,
+#     }
+
 
 
 # def compute_bbox(base_frame, keypoints, model):
@@ -549,6 +816,93 @@ def compute_bbox(base_frame, keypoints, model, target_aspect_ratio=None):
     }
 
 
+def compute_bbox_standard(base_frame, keypoints, model, target_aspect_ratio=None):
+    """
+    结合 YOLOv5s 和 MediaPipe 的裁切逻辑。
+    输出：归一化后的坐标 (0.0 - 1.0)
+    """
+    frame = base_frame.copy()
+    h_img, w_img = frame.shape[:2]
+
+    if target_aspect_ratio is None:
+        target_aspect_ratio = w_img / h_img
+
+    # 1. 获取边界 (原始像素坐标)
+    mp_x1, mp_y1, mp_x2, mp_y2 = _get_mediapipe_bbox(keypoints, w_img, h_img)
+    yolo_x1, yolo_y1, yolo_x2, yolo_y2 = _get_yolo_bbox_by_results(model)
+
+    # 2. 计算并集
+    if yolo_x1 is None:
+        final_x1, final_y1, final_x2, final_y2 = mp_x1, mp_y1, mp_x2, mp_y2
+    else:
+        final_x1, final_y1 = min(mp_x1, yolo_x1), min(mp_y1, yolo_y1)
+        final_x2, final_y2 = max(mp_x2, yolo_x2), max(mp_y2, yolo_y2)
+
+    # 3. 智能留白
+    box_h = final_y2 - final_y1
+    pad_top, pad_bottom = box_h * 0.15, box_h * 0.05
+    pad_x = (final_x2 - final_x1) * 0.1
+
+    crop_x1, crop_x2 = max(0, final_x1 - pad_x), min(w_img, final_x2 + pad_x)
+    crop_y1, crop_y2 = max(0, final_y1 - pad_top), min(h_img, final_y2 + pad_bottom)
+
+    # 4. 修正纵横比
+    current_w, current_h = crop_x2 - crop_x1, crop_y2 - crop_y1
+    current_ratio = current_w / current_h
+
+    if current_ratio < target_aspect_ratio:
+        target_w = current_h * target_aspect_ratio
+        delta_w = target_w - current_w
+        crop_x1 -= delta_w / 2
+        crop_x2 += delta_w / 2
+    else:
+        target_h = current_w / target_aspect_ratio
+        delta_h = target_h - current_h
+        crop_y1 -= delta_h / 2
+        crop_y2 += delta_h / 2
+
+    # 5. 边界平移与截断 (Shift & Clip)
+    if crop_x1 < 0:
+        crop_x2 += abs(crop_x1)
+        crop_x1 = 0
+    if crop_x2 > w_img:
+        crop_x1 -= (crop_x2 - w_img);
+        crop_x2 = w_img
+    if crop_y1 < 0:
+        crop_y2 += abs(crop_y1);
+        crop_y1 = 0
+    if crop_y2 > h_img:
+        crop_y1 -= (crop_y2 - h_img);
+        crop_y2 = h_img
+
+    x1, y1 = max(0, crop_x1), max(0, crop_y1)
+    x2, y2 = min(w_img, crop_x2), min(h_img, crop_y2)
+
+    # 6. 计算最终中心 (像素)
+    final_cx = (x1 + x2) / 2
+    final_cy = (y1 + y2) / 2
+
+    # 7. 计算缩放倍数
+    scale = round(h_img / (y2 - y1) if (y2 - y1) > 0 else 1.0, 1)
+
+    # ================= 归一化处理 =================
+    return {
+        # 中心点坐标 (x/w, y/h)
+        "target_center": (round(final_cx / w_img, 4), round(final_cy / h_img, 4)),
+
+        # 边界框 [x1/w, y1/h, x2/w, y2/h]
+        "bbox": [
+            round(x1 / w_img, 4),
+            round(y1 / h_img, 4),
+            round(x2 / w_img, 4),
+            round(y2 / h_img, 4)
+        ],
+
+        # Scale 是比例值，本身就是归一化的，无需除以宽高
+        "scale": scale,
+    }
+
+
 def _get_mediapipe_bbox(keypoints, w, h):
     """从关键点获取绝对坐标的 bbox"""
     # 筛选全身关键点 (不仅是头肩，还有四肢)
@@ -599,6 +953,26 @@ def _get_yolo_bbox(model, frame):
 
     return target['xmin'], target['ymin'], target['xmax'], target['ymax']
 
+
+def _get_yolo_bbox_by_results(results):
+    """运行 YOLOv5s 获取最大的人体 Box"""
+
+
+    # 解析结果：pandas format 比较好处理
+    df = results.pandas().xyxy[0]
+
+    # 筛选类别 (class 0 通常是 person, 具体看你的模型配置)
+    people = df[df['class'] == 0]
+
+    if people.empty:
+        return None, None, None, None
+
+    # 找到置信度最高，或者面积最大的人
+    # 这里假设画面主体是面积最大的人
+    people['area'] = (people['xmax'] - people['xmin']) * (people['ymax'] - people['ymin'])
+    target = people.loc[people['area'].idxmax()]
+
+    return target['xmin'], target['ymin'], target['xmax'], target['ymax']
 def get_keypoints_bbox(keypoints, ids):
     xs, ys = [], []
 
@@ -748,3 +1122,46 @@ def get_result(frame, keypoints):
     bottom = int(min(height, top + height_margin))
 
     return left, top, right, bottom
+
+
+def suggest_orientation_multi(yolo_results, target_aspect_ratio=None):
+    """
+    根据 YOLO 检测到的所有人，判断整体适合横屏还是竖屏。
+
+    Args:
+        yolo_results: YOLOv5 的 pandas 结果 (df = results.pandas().xyxy[0])
+    """
+    # 筛选所有人
+    people = yolo_results[0]
+
+    if len(people) == 0:
+        return "Portrait", "未检测到人物"
+
+    # 1. 计算所有人构成的“大包围盒”
+    all_x1 = people['xmin'].min()
+    all_y1 = people['ymin'].min()
+    all_x2 = people['xmax'].max()
+    all_y2 = people['ymax'].max()
+
+    group_w = all_x2 - all_x1
+    group_h = all_y2 - all_y1
+    group_ratio = group_w / group_h  # 注意这里用 W/H，大于 1 表示宽
+
+    # 2. 决策逻辑
+    if len(people) == 1:
+        # 单人情况：回归姿态逻辑（此处简化为比例判断）
+        return "Portrait" if group_ratio < 0.8 else "Landscape", "单人姿态适配"
+
+    # 3. 多人核心逻辑
+    if len(people) >= 2:
+        # 如果人群宽度明显大于高度 (例如 2 人并排，比例通常会超过 1.2)
+        if group_ratio > 1.2:
+            return "Landscape", f"检测到 {len(people)} 人横向排布，建议横屏捕捉全员"
+
+        # 如果人群比较“瘦长”（例如前后站位或拥抱）
+        elif group_ratio < 0.85:
+            return "Portrait", "人群构图紧凑，竖屏更具视觉重心"
+
+        # 处于中间地带 (0.85 ~ 1.2)
+        else:
+            return "Landscape", "多人组合构图，建议使用横屏预留环境空间"
